@@ -2,6 +2,8 @@
 
 > 计算机基础。
 
+
+
 ## Assembly
 
 我已经学习过学校课程的Intel格式和CSAPP中的AT&T格式，有一些基础，简单过一下。
@@ -461,31 +463,45 @@ _start:
 
 接下来是我们关于debugger的一些简单的使用，在bomblab中也是提到过很多次了。
 
+其实这层实验也算是一个bomblab之类的东西。
 
 
 
+```
+run
+
+continue
+
+info registers
+
+p $rdi
+
+p/x $rdi
+
+x/<n><u><f> <address> // 检查内存的内容
+
+x/8i $rip			  // 可以带格式，检查8条指令
+
+break
+
+finish
+
+nexti
+
+stepi
+
+display				 // 一直监控某个变量
+```
 
 
 
+搞清楚read()调用时候的参数：**ssize_t read(int fd, void *buf, size_t count);**
 
 
 
+那么调用的时候地址就存放在 $rsi寄存器内部。
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+​	**level4**:正确的使用display和断点之类的工具就可以解决，循环不断的在栈上一个相同的位置去设置一些值的大小，这个之后就稍微有一些难度了。
 
 
 
