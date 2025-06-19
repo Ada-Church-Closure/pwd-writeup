@@ -459,7 +459,13 @@ _start:
 
 ## Debugging Refresher
 
+```sh
+$host scp -i key -r hacker@pwn.college:/challenge
+```
 
+
+
+我们用上面的指令拿在本地做比较流畅。
 
 接下来是我们关于debugger的一些简单的使用，在bomblab中也是提到过很多次了。
 
@@ -503,9 +509,54 @@ display				 // 一直监控某个变量
 
 ​	**level4**:正确的使用display和断点之类的工具就可以解决，循环不断的在栈上一个相同的位置去设置一些值的大小，这个之后就稍微有一些难度了。
 
+​	gdb脚本的编写和使用：
 
+比如写一个脚本：x.gdb	用这个参数启动：-x <PATH_TO_SCRIPT>
 
+~/.gdbinit---》**就是一个初始化的脚本**，可以写入一些通用的操作
 
+一个脚本的例子：
+
+```gdb
+start // 开始程序run，并且在main函数的位置设置断点
+break *main+42
+commands
+  silent
+  set $local_variable = *(unsigned long long*)($rbp-0x32)
+  printf "Current value: %llx\n", $local_variable
+  continue
+end
+continue
+```
+
+​	注意：这里的command就是对于断点进行编程---》当在*main + 42的位置停止的时候，我们会进行从command-end之间的所有指令的操作。silent清除常规输出，打印变量的值。
+
+​	注意两个continue的区别。
+
+​	那么比如针对level4,我们编写一个脚本。
+
+```gdb
+set $address = 0
+
+break *main + 704
+commands
+    silent
+    set $address = $rsi
+    continue
+end
+
+break *main + 757
+commands
+    silent
+    printf "Value at $rsi = 0x%llx\n", *(unsigned long long*)$address
+    continue
+end
+
+run
+continue
+```
+
+这就是我们写的脚本，简单来说debug的效率会上升。就是实现了一个自动化的流程一样。
 
 
 
