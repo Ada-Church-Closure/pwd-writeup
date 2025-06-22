@@ -558,7 +558,42 @@ continue
 
 这就是我们写的脚本，简单来说debug的效率会上升。就是实现了一个自动化的流程一样。
 
+​	**level5**:关于set关键字
 
+​	You can modify the state of your target program with the `set` command. For example, you can use `set $rdi = 0` to zero out $rdi. You can use `set *((uint64_t *) $rsp) = 0x1234` to set the first value on the stack to 0x1234. You can use `set *((uint16_t *) 0x31337000) = 0x1337` to set 2 bytes at 0x31337000 to 0x1337.
+
+​	这里我们的任务还是一样，但是我们要实现和这个程序交互的纯自动化，比如它让我们连续输入1000个stack上面改变的值，我们就不能手动复制粘贴了。
+
+注意我们是怎么跳过scanf函数的：
+
+```asm
+set $address = 0
+
+break *main + 570
+commands
+    silent
+    set $address = $rsi
+    continue
+end
+
+break *main + 620
+commands
+    silent
+    if($address != 0)
+        set *(unsigned long long*)$rsi = *(unsigned long long*)$address
+    
+    set $rip = *main + 630
+    continue
+end
+
+start
+```
+
+scanf函数只是从键盘读入value,并且把这个值给rsi地址的位置，我们提前设置好，然后直接跳过即可。
+
+直接在原来的**asm**中观察，直接跳过scanf函数，更改rip指针的值即可。
+
+> 这样就完全实现了自动化。
 
 
 
