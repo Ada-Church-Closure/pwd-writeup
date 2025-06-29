@@ -630,15 +630,15 @@ $1 = 7
 
 https://x64.syscall.sh/
 
-1.打开一个文件的过程，仿佛FD---》文件描述符。
+1.打开一个文件的过程，FD---》文件描述符。
 
-2.首先我们理解退出的逻辑：
+2.首先我们理解**退出的逻辑**：
 
 rdi---》error code表示退出时候的状态。
 
 rax---》进行系统的调用。
 
-3.接下来是socket系统调用创建一个server的socket。
+3.接下来是socket，系统调用创建一个server的socket。
 
 ```c
 int socket(int domain, int type, int protocol);
@@ -661,38 +661,52 @@ int socket(int domain, int type, int protocol);
 
 3.protocol 一般设置为 0，表示让内核根据前两个参数自动选择合适的协议：
 
-- 对于 `AF_INET + SOCK_STREAM`，自动选择 TCP。
-- 对于 `AF_INET + SOCK_DGRAM`，自动选择 UDP。
+- 对于 `AF_INET + SOCK_STREAM`，自动选择 **TCP**。
+- 对于 `AF_INET + SOCK_DGRAM`，自动选择 **UDP**。
 
 同时我们注意一下这里的宏：
 
-| `AF_INET` | 2    | IPv4 地址族 |
-| --------- | ---- | ----------- |
-|           |      |             |
-
-| `SOCK_STREAM` | 1    | TCP 流式套接字 |
-| ------------- | ---- | -------------- |
-|               |      |                |
-
-| `SOCK_DGRAM` | 2    | UDP 数据报套接字 |
-| ------------ | ---- | ---------------- |
-|              |      |                  |
-
-| `AF_INET6` | 10   | IPv6 地址族 |
-| ---------- | ---- | ----------- |
-|            |      |             |
-
-| `AF_UNIX` | 1    | 本地 UNIX 域套接字 |
-| --------- | ---- | ------------------ |
-|           |      |                    |
 
 
+| 名称          | 值   | 说明                                  |
+| ------------- | ---- | ------------------------------------- |
+| `AF_INET`     | 2    | IPv4 地址族                           |
+| `SOCK_STREAM` | 1    | TCP 流式套接字                        |
+| `sys_socket`  | 41   | Linux x86-64 中的 socket syscall 编号 |
+| `sys_exit`    | 60   | 退出 syscall 编号                     |
 
+3.接着是利用bind函数进行绑定的操作，把刚刚创建的socket和我们的本地IP地址和端口号进行绑定。
 
+​	我们要创建结构体，选定参数，本地端口和IP地址。
 
+4.listen函数，进行监听，和客户端进行连接的操作。
+
+5.当出现连接的时候，我们就应该使用accept函数。
+
+​	这是我们接受的方式。后面两个参数直接传NULL，说明server不关心Client的地址，简单测试来使用。
+
+```c
+int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+```
 
 
 
+6.wirte发送，linux中普通文件和socket是类似的，只要确定FD即可。
+
+write操作之后还要close()。
+
+​	我们要先read，读取客户端的请求，注意传参数的时候，地址的传递，lea rdi, [request]。---》注意传送数据地址的方法
+
+listen--->accept--->read--->write--->close...
+
+在open的时候，如果请求的是文件。提取文件路径很麻烦。---》比较复杂。。。。。。
+
+```
+O_WRONLY` (只写模式)，值为 `1
+O_RDWR` (读写模式)，值为 `2
+O_CREAT` (创建文件)，值为 `64
+O_APPEND` (追加写模式)，值为 `8
+```
 
 
 
