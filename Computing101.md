@@ -708,6 +708,457 @@ O_CREAT` (创建文件)，值为 `64
 O_APPEND` (追加写模式)，值为 `8
 ```
 
+> ​	值得注意的一点的是FD的生命周期，我们要及时备份。不仅是FD,还有read字节的返回值大小，我们要对于某些系统调用的返回值用r12, r13之类的寄存器保存起来。
+
+| 用途                        | 推荐寄存器            |
+| --------------------------- | --------------------- |
+| 保存 socket FD（server）    | `rbx`                 |
+| 保存 client 的 FD（accept） | `r12`                 |
+| 保存打开的文件 FD           | `r13`                 |
+| 临时 syscall 返回值         | `rax`（立即用后丢弃） |
+
+
+
+tips：
+
+定义数据的类型：
+
+| 指令    | 定义的数据类型      | 示例                     | 含义              |
+| ------- | ------------------- | ------------------------ | ----------------- |
+| `.byte` | 8-bit（1字节）整数  | `.byte 42`               | 存一个字节 `0x2a` |
+| `.word` | 16-bit（2字节）整数 | `.word 12345`            | 小端序：0x39 0x30 |
+| `.long` | 32-bit（4字节）整数 | `.long 123456`           |                   |
+| `.quad` | 64-bit（8字节）整数 | `.quad 1234567890123456` |                   |
+
+
+
+这些定义的数据的操作数的写法：
+
+| 数据类型（声明） | 占用大小 | 对应操作指令      | 示例                           | 含义                    |
+| ---------------- | -------- | ----------------- | ------------------------------ | ----------------------- |
+| `.byte`          | 1 字节   | `byte ptr [...]`  | `mov al, byte ptr [my_byte]`   | 从地址读取1字节到 `al`  |
+| `.word`          | 2 字节   | `word ptr [...]`  | `mov ax, word ptr [my_word]`   | 从地址读取2字节到 `ax`  |
+| `.long`          | 4 字节   | `dword ptr [...]` | `mov eax, dword ptr [my_long]` | 从地址读取4字节到 `eax` |
+| `.quad`          | 8 字节   | `qword ptr [...]` | `mov rax, qword ptr [my_quad]` | 从地址读取8字节到 `rax` |
+
+
+
+> ​	接下来就是加一个循环在listen---(loop)---accept---read----write---close---(loop)---exit，这样一个持久化的过程，一个客户端可以一直连接并且请求资源。
+>
+
+那么接下来我们要去实现一个并发的服务器：
+
+```
++-----------------------------+
+| Parent (main process)       |
+|                             |
+|  socket → bind → listen     |
+|        ┌──── accept ───┐    |
+|        ↓               ↓    |
+|   fork()              wait? |
+|        ↓                    |
+|  Child process              |
+|   → read → open → write     |
+|   → close → exit            |
++-----------------------------+
+```
+
+
+
+这是一个基本架构，就是使用fork函数来实现并发的功能。
+
+### Server.s
+
+> ​	这样就实现了一个可以并发处理请求的服务器，一旦请求资源完毕之后就直接close,不保持连接。
+>
+> ​	注意fork（）函数是实现并发的关键，fork了之后，父进程不应当持有accept的客户端socket,应当close（），同理子进程不应当持有listen的socket,应当close（），都是要注意的地方。
+
+```asm
+.intel_syntax noprefix
+.global _start
+
+.section .data # 提前准备write的参数
+response: .ascii "HTTP/1.0 200 OK\r\n\r\n"
+resp_len = $ - response
+request_file_len: .long 0
+server_socket_number: .quad 0
+
+.section .text
+.lcomm request, 1024
+.lcomm file_path 1024
+.lcomm file_buffer 1024
+
+_start:
+mov rdi, 2  # 创建一个server的socket
+mov rsi, 1
+mov rdx, 0
+mov rax, 0x29
+syscall
+
+mov qword ptr [server_socket_number], rax # socket的文件描述符号先放到rbx中
+sub rsp, 16  # 创建struct sockaddr_in结构体的内容
+mov word ptr [rsp], 0x0002
+mov word ptr [rsp + 2], 0x5000
+mov dword ptr [rsp + 4], 0x00000000
+mov qword ptr [rsp + 8], 0
+
+mov rdi, qword ptr [server_socket_number]    # socket的文件描述符号
+lea rsi, [rsp]  # 结构体的地址
+mov rdx, 16     # 结构体的大小
+mov rax, 49     # 调用bind()
+syscall
+
+mov rdi, qword ptr [server_socket_number]    # listen，监听客户端
+mov rsi, 0
+mov rax, 50
+syscall
+
+.ans_req_loop:
+mov rdi, qword ptr [server_socket_number]    # accpet，和发起请求的客户端连接,返回值是新建立的socket的FD
+xor rsi, rsi
+xor rdx, rdx
+mov rax, 43
+syscall
+mov rbx, rax    # put the client fd into rbx
+
+mov rax, 57
+syscall
+cmp rax, 0
+je .cocurrent_loop
+
+mov rdi, rbx
+mov rax, 3
+syscall
+jmp .ans_req_loop
+
+
+.cocurrent_loop:
+mov rdi, [server_socket_number]
+mov rax, 3
+syscall
+
+mov rdi, rbx    # read request content from client
+lea rsi, [request]
+mov rdx, 1024
+mov rax, 0
+syscall
+
+lea rsi, [request]       
+lea rdi, [file_path]     
+
+.skip_spaces:
+    mov al, byte ptr [rsi]
+    cmp al, ' '             
+    je .found_path
+    inc rsi
+    jmp .skip_spaces
+
+.found_path:
+    inc rsi                  
+
+.copy_loop:
+    mov al, byte ptr [rsi]
+    cmp al, ' '
+    je .done_copy
+    cmp al, 13              
+    je .done_copy
+    mov byte ptr [rdi], al
+    inc dword ptr [request_file_len]
+    inc rsi
+    inc rdi
+    jmp .copy_loop
+
+.done_copy:
+    mov byte ptr [rdi], 0  
+
+
+lea rdi, [file_path] 
+mov rsi, 0
+mov rdx, 0
+mov rax, 2
+syscall
+mov r12, rax
+
+mov rdi, rax       # 读取请求的文件到某个缓冲区内部, read
+lea rsi, [file_buffer]
+mov rdx, request_file_len
+mov rax, 0
+syscall
+mov r13, rax
+
+mov rdi, r12       # close，关闭关于这个文件的读取
+mov rax, 3
+syscall
+
+
+mov rdi, rbx    # write，向客户端写入数据,OK回应
+mov rsi, offset response
+mov rdx, resp_len
+mov rax, 1
+syscall
+
+mov rdi, rbx
+lea rsi, [file_buffer] # write,把请求文件文件中的内容写给socket
+mov rdx, r13
+mov rax, 1
+syscall
+
+mov rdi, rbx # 关闭socket
+mov rax, 3
+syscall
+
+mov rdi, 0  
+mov rax, 60
+syscall
+```
+
+实现POST请求的Server：
+
+> ​	Expanding your server’s capabilities further, this challenge focuses on handling HTTP POST requests concurrently. POST requests are more complex because they include both headers and a message body. You will once again use [fork](https://man7.org/linux/man-pages/man2/fork.2.html) to manage multiple connections, while using [read](https://man7.org/linux/man-pages/man2/read.2.html) to capture the entire request. Again, you will parse the URL path to determine the specified file, but  this time instead of reading from that file, you will instead write to  it with the incoming POST data. In order to do so, you must determine the length of the incoming POST  data. The *obvious* way to do this is to parse the `Content-Length` header, which specifies exactly that. Alternatively, consider using the return value of [read](https://man7.org/linux/man-pages/man2/read.2.html) to determine the total length of the request, parsing the request to find the total length of the headers (which end with `\r\n\r\n`), and using that difference to determine the length of the body--this  seemingly more complicated algorithm may actually be easier to  implement. Finally, return just a `200 OK` response to the client to indicate that the POST request was successful.
+
+有消息头和消息体。
+
+向请求的文件写入内容。---》这就是所谓的表单提交的过程。
+
+我要确定写入文件的长度，然后把这部分进行写入的操作。
+
+> 注意的几个地方。
+
+open打开的方式，因为我们是要写入一个文件：
+
+```asm
+mov rdi, file_path      ; 文件路径
+mov rsi, 0x41           ; O_WRONLY | O_CREAT
+mov rdx, 0o777          ; 权限模式（注意是八进制）
+mov rax, 2              ; syscall: open
+syscall
+```
+
+我们会读取这样的一个post请求：
+
+```txt
+read(4, "POST /tmp/tmpw0a5724c HTTP/1.1\r\nHost: localhost\r\nUser-Agent: python-requests/2.32.4\r\nAccept-Encoding: gzip, deflate, zstd\r\nAccept: */*\r\nConnection: keep-alive\r\nContent-Length: 228\r\n\r\n8jYMDjUSyPfG0mL4hhqLvJ8Ea1mvNrMRrja2H7qJH4Qt6l2L4BJHPaccAelllIFCYZjmsq022woekR9SO9TOT62roaelSox6mwLgomzPSHyyUbV8w1YEM1KIpPLNH8qcCmsWvZ65LYLqDUYkeZDFJsPg5MjvDrEuLcnWkjoykJdJTzTrh5OZpwq63tKezYLjQTURwxhXhI9RgTka81VGywnCLVuWojwgZFwW", 1024) = 411
+```
+
+消息头就是在\r\n\r\n之前的部分，我们要把之后的部分写入对应的文件路径。
+
+> ​	那么这就是我们实现的postServer,能够处理post请求。
+
+```asm
+.intel_syntax noprefix
+.global _start
+
+.section .data # 提前准备write的参数
+response: .ascii "HTTP/1.0 200 OK\r\n\r\n"
+resp_len = $ - response
+server_socket_number: .quad 0
+body_length: .quad 0
+body_offset: .quad 0
+request_length: .quad 0
+
+
+.section .text
+.lcomm request, 1024
+.lcomm file_path 1024
+.lcomm file_buffer 1024
+.lcomm request_body 1024
+
+_start:
+mov rdi, 2  # 创建一个server的socket
+mov rsi, 1
+mov rdx, 0
+mov rax, 0x29
+syscall
+
+mov qword ptr [server_socket_number], rax # socket的文件描述符号先放到rbx中
+sub rsp, 16  # 创建struct sockaddr_in结构体的内容
+mov word ptr [rsp], 0x0002
+mov word ptr [rsp + 2], 0x5000
+mov dword ptr [rsp + 4], 0x00000000
+mov qword ptr [rsp + 8], 0
+
+mov rdi, qword ptr [server_socket_number]    # socket的文件描述符号
+lea rsi, [rsp]  # 结构体的地址
+mov rdx, 16     # 结构体的大小
+mov rax, 49     # 调用bind()
+syscall
+
+mov rdi, qword ptr [server_socket_number]    # listen，监听客户端
+mov rsi, 0
+mov rax, 50
+syscall
+
+.ans_req_loop:
+mov rdi, qword ptr [server_socket_number]    # accpet，和发起请求的客户端连接,返回值是新建立的socket的FD
+xor rsi, rsi
+xor rdx, rdx
+mov rax, 43
+syscall
+mov rbx, rax    # put the client fd into rbx
+
+mov rax, 57
+syscall
+cmp rax, 0
+je .cocurrent_loop
+
+mov rdi, rbx
+mov rax, 3
+syscall
+jmp .ans_req_loop
+
+
+.cocurrent_loop:
+mov rdi, [server_socket_number]
+mov rax, 3
+syscall
+
+mov rdi, rbx    # read request content from client
+lea rsi, [request]
+mov rdx, 1024
+mov rax, 0
+syscall
+mov qword ptr [request_length], rax
+
+# extract the file path from the content,the content is in the request
+.extract_path:
+lea rsi, [request]       
+lea rdi, [file_path]     
+
+.skip_spaces:
+    mov al, byte ptr [rsi]
+    cmp al, ' '             
+    je .found_path
+    inc rsi
+    jmp .skip_spaces
+
+.found_path:
+    inc rsi                  
+
+.copy_loop:
+    mov al, byte ptr [rsi]
+    cmp al, ' '
+    je .done_copy
+    cmp al, 13              
+    je .done_copy
+    mov byte ptr [rdi], al
+    inc rsi
+    inc rdi
+    jmp .copy_loop
+
+.done_copy:
+    mov byte ptr [rdi], 0
+
+
+# extract the body of the request into the `[request_body]` and calculate the length
+# use rdi to storage the offset of the body in the request
+.extract_body:
+lea rsi, [request]
+mov rdi, 0
+
+.skip_header:
+mov al, byte ptr [rsi]
+cmp al, 0x0d
+je .next_check
+inc rsi
+inc rdi
+jmp .skip_header
+
+
+.next_check:
+inc rsi
+inc rsi
+inc rdi
+inc rdi
+mov al, byte ptr [rsi]
+cmp al, 0x0d           
+je .done_find_body
+jmp .skip_header
+
+
+.done_find_body:
+inc rdi
+inc rdi
+mov qword ptr [body_offset], rdi
+mov rdi, [request_length]
+mov rsi, qword ptr [body_offset]
+sub rdi, rsi
+mov qword ptr [body_length], rdi
+
+
+# 已经拿到了文件的路径，现在更改open的模式,open returns the fd of the file
+lea rdi, [file_path]
+mov rsi, 0x41  
+mov rdx, 0x1ff
+mov rax, 2
+syscall
+mov r12, rax
+
+
+# 现在我们要尝试向这个文件写入client提交的内容
+mov rdi, rax
+lea rsi, [request]
+mov rax, qword ptr [body_offset]
+add rsi, rax
+mov rdx, [body_length]
+mov rax, 1
+syscall
+
+
+mov rdi, r12       # after written,close the file
+mov rax, 3
+syscall
+
+
+mov rdi, rbx    # write，向客户端写入数据,OK回应,表示我们已经写完了
+mov rsi, offset response
+mov rdx, resp_len
+mov rax, 1
+syscall
+
+
+mov rdi, rbx # 关闭socket
+mov rax, 3
+syscall
+
+mov rdi, 0  
+mov rax, 60
+syscall
+```
+
+### 成品Server
+
+> ​	我们最终要实现的server要满足post和get请求都可以处理，并且满足并发的要求。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
