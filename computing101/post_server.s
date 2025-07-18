@@ -76,17 +76,19 @@ mov qword ptr [request_length], rax
 # extract the file path from the content,the content is in the request
 .extract_path:
 lea rsi, [request]       
-lea rdi, [file_path]     
+lea rdi, [file_path]    
+mov rdx, 0 
 
 .skip_spaces:
     mov al, byte ptr [rsi]
     cmp al, ' '             
     je .found_path
     inc rsi
+    inc rdx
     jmp .skip_spaces
 
 .found_path:
-    mov qword ptr [is_post], rsi
+    mov qword ptr [is_post], rdx
     inc rsi         
 
 .copy_loop:
@@ -104,7 +106,7 @@ lea rdi, [file_path]
     mov byte ptr [rdi], 0
 
 
-mov rsi, qword ptr [is_post]
+mov rsi, is_post
 cmp rsi, 3
 je .handle_get_request
 
@@ -176,12 +178,13 @@ mov rdx, resp_len
 mov rax, 1
 syscall
 
+
 jmp .over
+
 
 
 .handle_get_request:
 
-# open the file
 lea rdi, [file_path] 
 mov rsi, 0
 mov rdx, 0
@@ -189,16 +192,14 @@ mov rax, 2
 syscall
 mov r12, rax
 
-# read the content to buffer
-mov rdi, rax
+mov rdi, rax       # 读取请求的文件到某个缓冲区内部, read
 lea rsi, [file_buffer]
 mov rdx, 1024
 mov rax, 0
 syscall
 mov r13, rax       # 这里要先保存read到的字节数，用来确定最后要写入的字节数大小
 
-
-mov rdi, r12       # close
+mov rdi, r12       # close，关闭关于这个文件的读取
 mov rax, 3
 syscall
 
@@ -216,7 +217,6 @@ mov rax, 1
 syscall
 
 
-
 .over:
 mov rdi, rbx # 关闭socket
 mov rax, 3
@@ -225,5 +225,3 @@ syscall
 mov rdi, 0  # 退出这个程序
 mov rax, 60
 syscall
-
-
