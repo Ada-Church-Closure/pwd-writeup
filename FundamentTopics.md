@@ -201,7 +201,7 @@ b'hello'
 
 在实际中我们用pwntools来和程序进行交互，就是使用py脚本。
 
-### 程序
+### 理解
 
 > ​	比如这样的一个程序，实际上我们是要来构造一个字节流的输入，然后程序会把我们的字节流解码成二进制的字符串，接着进行比较的操作。
 
@@ -244,13 +244,56 @@ result = p.readall()
 print(result)
 ```
 
+UTF-8编码，宽字符的编码问题。--->最全最完整的，并且也是国际通用的。
 
+解码不一致而造成的路径穿越的攻击：
 
+**UTF-8**：
 
+- 与 ASCII 向后兼容（前 128 个字符编码一致）
+- 是网页、JSON、URL 编码等主流格式的默认编码
 
+**UTF-16**：
 
+- 不兼容 ASCII，文件开头通常需要 **BOM（Byte Order Mark）** 来标识字节序（大端或小端）
+- 在 Java 和 Windows 内部常用
 
+```py
+# 伪代码
+user_input = get_input_from_user()  # 攻击者输入: %2e%2e/%2e%2e/secret.txt
+decoded_once = urllib.parse.unquote(user_input)  # 第一次 decode：变成 ../..../secret.txt
+if ".." in decoded_once:
+    reject_request()
+else:
+    file_path = os.path.join(base_dir, urllib.parse.unquote(user_input))
+    open(file_path)  # 第二次 decode（再次解码 %2e%2e → ..），打开敏感文件
 
+```
+
+> ​	涉及到UTF-16的之类的编码，我们不要手写，而要用py来生成，这也是最好和最快的选择。
+>
+
+```py
+with open("input03.txt", "wb") as f:
+    f.write("pfjwmfxa".encode("utf-16"))
+```
+
+当我们能更改编码时，可能会出现错误：
+
+```console
+hacker@dojo:~$ ipython
+In [1]: "🎈".encode("utf-8")
+Out[1]: b'\xf0\x9f\x8e\x88'
+```
+
+​	If we mess with the resulting bytes, and then decode them, we would (of course) get something different:
+
+```console
+In [2]: b'\xf0\x9f\x8e\xaa'.decode("utf-8")
+Out[2]: '🎪'
+
+In [3]: b'\xf0\x9f\x8e\x42'.decode("utf-8")
+```
 
 
 
