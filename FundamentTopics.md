@@ -270,7 +270,7 @@ else:
 
 ```
 
-> ​	涉及到UTF-16的之类的编码，我们不要手写，而要用py来生成，这也是最好和最快的选择。
+> ​	涉及到UTF-16的之类的编码，我们不要手写，而要用py来生成，这也是最好和最快的选择,也是作为一个程序员的选择。
 >
 
 ```py
@@ -293,7 +293,56 @@ In [2]: b'\xf0\x9f\x8e\xaa'.decode("utf-8")
 Out[2]: '🎪'
 
 In [3]: b'\xf0\x9f\x8e\x42'.decode("utf-8")
+---------------------------------------------------------------------------
+UnicodeDecodeError                        Traceback (most recent call last)
+Cell In[3], line 1
+----> 1 b'\xf0\x9f\x8e\x42'.decode("utf-8")
+
+UnicodeDecodeError: 'utf-8' codec can't decode bytes in position 0-2: invalid continuation byte
 ```
+
+那么就可以更改来达到攻击的效果。
+
+接下来是**base64**编码的问题：
+
+​	The name "base64" comes from the fact that there are 64 characters used in each output character. These can actually vary, but the standard base64 encoding uses an "alphabet" of the uppercase letters `A` through `Z`, the lowercase letters `a` through `z`, the digits `0` through `9`, and the `+` and `/` symbols. This results in 64 total output symbols, and each symbol can encode `2**6` (2 to the power of 6) possible input symbols, or 6 bits of data. That means that to encode a single byte (8 bits) of input, you need more than one base64 output character. In fact, you need *two*: one that encodes the first 6 bits and one that encodes the remaining 2 (with 4 bits of that second output character being unused). To mark these unused bits, base64 encoded data appends an `=` for every two unused bits. For example:
+
+```sh
+hacker@dojo:~$ echo -n A | base64
+QQ==
+hacker@dojo:~$ echo -n AA | base64
+QUE=
+hacker@dojo:~$ echo -n AAA | base64
+QUFB
+hacker@dojo:~$ echo -n AAAA | base64
+QUFBQQ==
+```
+
+​	Base64 编码将 **每三个字节（3×8=24位）** 的数据，分为 **四组（4×6=24位）**，每组6位，用下面这个 **64个字符的表** 来映射编码：
+
+```txt
+A–Z => 0–25  
+a–z => 26–51  
+0–9 => 52–61  
++    => 62  
+/    => 63
+```
+
+​	注意，有人可能会混淆，编码肯定不能提升安全性，可能有一点混淆视听的效果，当我们尝试去攻击的时候：
+
+> ​	"Good Artists Copy, Great Artists Steal!" When you're doing security analysis and need to interact with bespoke software, ripping the implementations of custom communication protocols out of that software is a good way to reach interoperability. 
+
+仔细阅读互操作和通信部分的代码。
+
+> ​	关于编码，就是类似于等式两边变形最终相同一样，当加密手段没有被加入的时候，其实是不复杂的，但是要理解编码的原理以及目的的问题。
+
+
+
+
+
+
+
+
 
 
 
