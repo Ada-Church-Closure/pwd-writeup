@@ -336,6 +336,330 @@ a–z => 26–51
 
 > ​	关于编码，就是类似于等式两边变形最终相同一样，当加密手段没有被加入的时候，其实是不复杂的，但是要理解编码的原理以及目的的问题。
 
+## web基础
+
+发起Http GET请求
+
+
+
+Flask,小型web框架,py
+
+
+
+
+
+page source查看网页的源代码
+
+
+
+**metadata**元数据,是用来描述数据的数据
+
+请求元数据:
+
+
+
+| Header 字段       | 说明                                                 |
+| ----------------- | ---------------------------------------------------- |
+| `Host`            | 目标主机域名或IP（必须字段）                         |
+| `User-Agent`      | 客户端信息（如浏览器类型）                           |
+| `Accept`          | 支持的内容类型（如 `text/html`、`application/json`） |
+| `Accept-Encoding` | 支持的压缩格式（如 `gzip`, `deflate`）               |
+| `Cookie`          | 携带的用户 cookie                                    |
+| `Authorization`   | 身份验证信息（如 token）                             |
+| `Content-Length`  | 请求体的长度（用于 POST）                            |
+| `Content-Type`    | 请求体的类型（如 `application/json`）                |
+
+相应元数据:
+
+| Header 字段                   | 说明                                                 |
+| ----------------------------- | ---------------------------------------------------- |
+| `Content-Type`                | 响应内容的类型（如 `text/html`, `application/json`） |
+| `Content-Length`              | 内容的字节数                                         |
+| `Set-Cookie`                  | 设置客户端 cookie                                    |
+| `Server`                      | 服务器信息（如 nginx, Apache）                       |
+| `Cache-Control`               | 缓存策略                                             |
+| `Content-Encoding`            | 响应内容的压缩格式                                   |
+| `Access-Control-Allow-Origin` | CORS 跨域设置                                        |
+| `Date`                        | 响应发送时间                                         |
+
+
+
+**netcat**命令:可以实现很多有意思的功能.
+
+```sh
+nc [选项] 主机名/IP地址 端口
+```
+
+比如:
+
+```sh
+$ nc 127.0.0.1 80 # 监听本地的80端口
+```
+
+**http**的**request**格式:
+
+```http
+GET /path/to/resource HTTP/1.1
+Host: example.com
+User-Agent: curl/7.68.0
+Accept: */*
+
+<空行>
+```
+
+
+
+curl命令:http中进行数据的传输.
+
+发送一个GET请求.
+
+```sh
+curl http://example.com
+```
+
+比如访问一个本地的Sever:
+
+```sh
+curl -X GET http://localhost:80/validate
+```
+
+
+
+发起一个POST请求.
+
+```sh
+curl -X POST -d "username=admin&password=1234" http://example.com/login
+```
+
+
+
+添加请求header.
+
+```sh
+curl -H "Authorization: Bearer TOKEN123" http://example.com/api
+```
+
+
+
+文件upload.
+
+```sh
+curl -F "file=@example.txt" http://example.com/upload
+```
+
+
+
+比如要分析或者逆向一个httpServer.
+
+| 选项            | 说明                                      |
+| --------------- | ----------------------------------------- |
+| `-X`            | 指定请求方法（如 GET、POST、PUT、DELETE） |
+| `-d`            | 发送表单数据（POST 请求）                 |
+| `-H`            | 自定义请求头                              |
+| `-F`            | 表单上传文件（multipart/form-data）       |
+| `-o`            | 将输出写入文件                            |
+| `-L`            | 跟随重定向（如 301、302）                 |
+| `-v`            | 输出详细过程                              |
+| `--data-binary` | 发送原始数据流                            |
+
+
+
+我们的测试利器:https://requests.readthedocs.io/en/latest/
+
+> 不是哥们,这真有点帅了......
+
+![Requests logo](https://requests.readthedocs.io/en/latest/_static/requests-sidebar.png)
+
+主要利用request library,就是脚本.
+
+​	现代的大型服务器通常会托管多个网站,而用户的host请求头指名了我们要请求哪些网站的资源,有很多虚拟主机,而host确定了我们要访问的是哪个虚拟主机.
+
+​	我们手动设置headers.
+
+```py
+import requests
+url = 'http://localhost:80/qualify'
+headers = {
+    "Host":"cryptohack.org:80"
+}
+r = requests.get(url, headers = headers)
+print(r.text)
+```
+
+用curl请求:
+
+```sh
+curl -H "Host:www.google.com" http://localhost:80/man
+```
+
+用nc手动构造一次请求.
+
+> ​	我们要了解其中的细节问题.
+
+```sh
+$ curl -v -H "Host:flaws.cloud:80" http://localhost:80/check
+* Host localhost:80 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:80...
+* connect to ::1 port 80 from ::1 port 33860 failed: Connection refused
+*   Trying 127.0.0.1:80...
+* Connected to localhost (127.0.0.1) port 80
+* using HTTP/1.x
+> GET /check HTTP/1.1
+> Host:flaws.cloud:80
+> User-Agent: curl/8.12.1
+> Accept: */*
+> 
+* Request completely sent off
+< HTTP/1.1 400 BAD REQUEST
+< Server: Werkzeug/3.0.6 Python/3.8.10
+< Date: Tue, 22 Jul 2025 04:24:06 GMT
+< Content-Type: text/html; charset=utf-8
+< Content-Length: 149
+< Connection: close
+< 
+<!doctype html>
+<html lang=en>
+<title>400 Bad Request</title>
+<h1>Bad Request</h1>
+<p>You are using an incorrect client to access this resource!</p>
+* shutting down connection #0
+```
+
+
+
+​	Any tricky characters (such as spaces) are simply hex-encoded, with a `%` plopped in front of them. Of course, because `%` thus becomes a tricky character in itself, it must also be encoded. In the above example, `/solve my challenge` would become `/solve%20my%20challenge`, as the hex value of the ASCII space character is `0x20`.
+
+​	如果url的路径出现了空格,那么就有问题.空格直接解析成%20.
+
+
+
+请求中可以携带参数,比如:
+
+```sh
+http://example.com/search?keyword=cat&limit=5
+```
+
+中的`keyword=cat&limit=5`就是Query String.
+
+客户端不可信,就会造成安全问题:
+
+> ​	It's tempting to think of HTTP parameters as similar to parameters to a function call. However, keep in mind: when you're writing C or Python or Java code, an attacker (typically) can't just call random functions in your program with random parameters. But with HTTP, they *can*. They can just make HTTP requests wherever they want! This has caused quite a few security issues...
+
+传递参数:
+
+```py
+import requests
+url = 'http://localhost:80/authenticate'
+headers = {
+    "Host":"challenge.localhost:80"
+}
+payload = {
+    "security":"ekddfknb"
+}
+r = requests.get(url, headers = headers, params=payload)
+print(r.text)
+```
+
+怎么传递多参数?
+
+```txt
+/authenticate?secure_key=jcbaywzw&private_key=miwgzszt&access_code=buadbiky
+```
+
+在使用 `curl` 指定多个 HTTP 参数（即多个 GET 参数）时，需要特别小心，因为：
+
+- 在 **shell（终端）中**，`&` 有特殊含义 —— 它不是普通字符，而是用来将命令放到后台执行的。
+
+- 所以如果你在命令行中直接写：
+
+- ```sh
+  curl http://localhost:80/authenticate?secure_key=xxx&private_key=yyy&access_code=zzz
+  ```
+
+  shell 会把 `&private_key=yyy` 和 `&access_code=zzz` 当作新的命令（甚至后台运行的命令），**不是 URL 的一部分**。
+
+如果有多个参数,使用了&,那么一定要加上'',注意这里的细节.
+
+http form表单的提交POST
+
+浏览器直接提交,比如注册信息之类的
+
+那么curl命令:
+
+```sh
+$ curl -H "Host:challenge.localhost:80" -X POST "http://localhost:80/meet" -d "access=ugchpjev"
+```
+
+那么实际的请求是:
+
+A form using `application/x-www-form-urlencoded` content encoding (the default) sends a request where the body contains the form data in `key=value` pairs, with each pair separated by an `&` symbol, as shown below:
+
+> ​	用nc提交表单是比较麻烦的,要把header和body之间分开才可以.
+
+```http
+POST /test HTTP/1.1
+Host: example.com
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 27
+
+field1=value1&field2=value2
+```
+
+
+
+用py来做处理:
+
+```py
+import requests
+url = 'http://localhost:80/hack'
+payload = {
+    "challenge_key":"bxfzwxzl"
+}
+headers = {
+    "Host":"challenge.localhost:80"
+}
+r = requests.post(url, headers = headers, data = payload)
+print(r.text)
+```
+
+
+
+或者写html,直接构造表单,然后用浏览器打开:
+
+```html
+<!DOCTYPE html>
+<html>
+  <body>
+    <form action="http://challenge.localhost/gate" method="POST">
+      <input type="hidden" name="credential" value="cejsemob">
+      <input type="submit" value="Submit">
+    </form>
+  </body>
+</html>
+```
+
+那么就是小练习,提交多参数的表单:
+
+```sh
+curl -v -X POST "http://localhost:80/hack" \
+  -H "Host: challenge.localhost:80" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=ieovmiim&authcode=dhcrcdvp&access=cbmupwsi"
+```
+
+> ​	注意中间的空格,没有空格就和在一起了,会出错.
+>
+
+
+
+
+
+
+
+
+
 
 
 

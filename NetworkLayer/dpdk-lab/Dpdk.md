@@ -306,7 +306,7 @@ ninja -C build
 
 来构建这个项目，不用cMake之类的工具了。
 
-然后我们用来来处理某个网卡，但是我不想用物理网卡，害怕出问题：
+然后我们来处理某个网卡，但是我不想用物理网卡，害怕出问题：
 
 先用tcpdump抓一个包：
 
@@ -335,9 +335,476 @@ Got packet: SRC MAC = E4:0D:36:54:65:E1
 Got packet: SRC MAC = 9C:71:3A:F5:DC:91
 ```
 
-表明程序运行成功了。
-
 > ​	那么我们的第一个样例就运行成功了。
+
+## Programmer's Guide
+
+> ​	我们主要学习dpdk.org上面的基本概念一类的东西。
+
+### Intro
+
+架构方面的信息	开发环境	优化的指导
+
+### Overview
+
+> DPDK的架构。
+>
+> 简单，快速，完整的框架。
+>
+> 创建EAL（**Environment Abstraction Layer**）
+
+​	DPDK 的主要目标是为数据平面应用中的快速数据包处理，提供一个简单且完整的框架。用户可以使用这套代码来理解其中使用的一些技术，用于原型开发，或者添加自定义的协议栈。基于 DPDK 的其他生态系统选项也已存在。
+
+​	该框架通过构建 **环境抽象层（EAL, Environment Abstraction Layer）**，为特定环境创建一组库。这个环境可以是 Intel 架构的某种模式（32 位或 64 位）、Linux 用户态编译器或某个平台。环境的构建依赖于 meson 文件和配置文件。**一旦 EAL 库被构建完成，用户就可以将其链接到自己的应用程序中**。除了 EAL，DPDK 还提供了其他库，如 Hash（哈希库）、最长前缀匹配（LPM）库以及环形队列（ring）库等。还提供了一些示例程序，帮助用户了解如何使用 DPDK 的各种功能。
+
+​	DPDK 采用一种 **“运行至完成”**（run to completion）的数据包处理模型，即所有资源都必须在调用数据平面应用之前就分配好。这些应用作为执行单元在逻辑处理核心上运行。该模型**不支持调度器**，所有设备都通过**轮询（polling）**方式访问。不使用中断的主要原因是中断处理会引入性能开销。
+
+​	除了运行至完成模型，DPDK 还支持一种 **流水线模型（pipeline model）**，可以通过 ring（环形队列）在多个核心之间传递数据包或消息。这种方式允许以多个阶段处理工作，并可能使核心上的代码使用更高效。
+
+**开发环境：**
+
+​	The DPDK project installation requires Linux and the associated toolchain, such as one or more compilers, assembler, meson utility, editor and various libraries to create the DPDK components and libraries.
+
+​	When creating applications for the Linux user space, the glibc library is used.
+
+**EAL给我们提供了什么功能：**
+
+- DPDK loading and launching
+- Support for multi-process and multi-thread execution types
+- Core affinity/assignment procedures
+- System memory allocation/de-allocation
+- Atomic/lock operations
+- Time reference
+- PCI bus access
+- Trace and debug functions
+- CPU feature identification
+- Interrupt handling
+- Alarm operations
+- Memory management (malloc)
+
+
+
+#### Core Components
+
+核心组成和依赖关系的问题，核心库，核心函数,分别的功能是什么。
+
+![../_images/architecture-overview.svg](https://doc.dpdk.org/guides/_images/architecture-overview.svg)
+
+术语表：
+
+- ACL
+
+  Access Control List
+
+- API
+
+  Application Programming Interface
+
+- ASLR
+
+  Linux* kernel Address-Space Layout Randomization
+
+- BSD
+
+  Berkeley Software Distribution
+
+- Clr
+
+  Clear
+
+- CIDR
+
+  Classless Inter-Domain Routing
+
+- Control Plane
+
+  The control plane is concerned with the routing of packets and with providing a start or end point.
+
+- Core
+
+  A core may include several lcores or threads if the processor supports hyperthreading.
+
+- Core Components
+
+  A set of libraries provided by the DPDK, including eal, ring, mempool, mbuf, timers, and so on.
+
+- CPU
+
+  Central Processing Unit
+
+- CRC
+
+  Cyclic Redundancy Check
+
+- Data Plane
+
+  In contrast to the control plane, the data plane in a network architecture are the layers involved when forwarding packets. These layers must be highly optimized to achieve good performance.
+
+- DIMM
+
+  Dual In-line Memory Module
+
+- Doxygen
+
+  A documentation generator used in the DPDK to generate the API reference.
+
+- DPDK
+
+  Data Plane Development Kit
+
+- DRAM
+
+  Dynamic Random Access Memory
+
+- EAL
+
+  The Environment Abstraction Layer (EAL) provides a generic interface that hides the environment specifics from the applications and libraries. The services expected from the EAL are: development kit loading and launching, core affinity/ assignment procedures, system memory allocation/description, PCI bus access, inter-partition communication.
+
+- FIFO
+
+  First In First Out
+
+- FPGA
+
+  Field Programmable Gate Array
+
+- GbE
+
+  Gigabit Ethernet
+
+- HW
+
+  Hardware
+
+- HPET
+
+  High Precision Event Timer; a hardware timer that provides a precise time reference on x86 platforms.
+
+- ID
+
+  Identifier
+
+- IOCTL
+
+  Input/Output Control
+
+- I/O
+
+  Input/Output
+
+- IP
+
+  Internet Protocol
+
+- IPv4
+
+  Internet Protocol version 4
+
+- IPv6
+
+  Internet Protocol version 6
+
+- lcore
+
+  A logical execution unit of the processor, sometimes called a *hardware thread*.
+
+- L1
+
+  Layer 1
+
+- L2
+
+  Layer 2
+
+- L3
+
+  Layer 3
+
+- L4
+
+  Layer 4
+
+- LAN
+
+  Local Area Network
+
+- LPM
+
+  Longest Prefix Match
+
+- main lcore
+
+  The execution unit that executes the main() function and that launches other lcores.
+
+- master lcore
+
+  Deprecated name for *main lcore*. No longer used.
+
+- mbuf
+
+  An mbuf is a data structure used internally to carry messages (mainly network packets). The name is derived from BSD stacks. To understand the concepts of packet buffers or mbuf, refer to *TCP/IP Illustrated, Volume 2: The Implementation*.
+
+- MESI
+
+  Modified Exclusive Shared Invalid (CPU cache coherency protocol)
+
+- MTU
+
+  Maximum Transfer Unit
+
+- NIC
+
+  Network Interface Card
+
+- OOO
+
+  Out Of Order (execution of instructions within the CPU pipeline)
+
+- NUMA
+
+  Non-uniform Memory Access
+
+- PCI
+
+  Peripheral Connect Interface
+
+- PHY
+
+  An abbreviation for the physical layer of the OSI model.
+
+- PIE
+
+  Proportional Integral Controller Enhanced (RFC8033)
+
+- pktmbuf
+
+  An *mbuf* carrying a network packet.
+
+- PMD
+
+  Poll Mode Driver
+
+- PMU
+
+  Performance Monitoring Unit
+
+- QoS
+
+  Quality of Service
+
+- RCU
+
+  Read-Copy-Update algorithm, an alternative to simple rwlocks.
+
+- Rd
+
+  Read
+
+- RED
+
+  Random Early Detection
+
+- RSS
+
+  Receive Side Scaling
+
+- RTE
+
+  Run Time Environment. Provides a fast and simple framework for fast packet processing, in a lightweight environment as a Linux* application and using Poll Mode Drivers (PMDs) to increase speed.
+
+- Rx
+
+  Reception
+
+- Slave lcore
+
+  Deprecated name for *worker lcore*. No longer used.
+
+- Socket
+
+  For historical reasons, the term “socket” is used in the DPDK to refer to both physical sockets, as well as NUMA nodes. As a general rule, the term should be understood to mean “NUMA node” unless it is clear from context that it is referring to physical CPU sockets.
+
+- SLA
+
+  Service Level Agreement
+
+- srTCM
+
+  Single Rate Three Color Marking
+
+- SRTD
+
+  Scheduler Round Trip Delay
+
+- SW
+
+  Software
+
+- Target
+
+  In the DPDK, the target is a combination of architecture, machine, executive environment and toolchain. For example: i686-native-linux-gcc.
+
+- TCP
+
+  Transmission Control Protocol
+
+- TC
+
+  Traffic Class
+
+- TLB
+
+  Translation Lookaside Buffer
+
+- TLS
+
+  Thread Local Storage
+
+- trTCM
+
+  Two Rate Three Color Marking
+
+- TSC
+
+  Time Stamp Counter
+
+- Tx
+
+  Transmission
+
+- TUN/TAP
+
+  TUN and TAP are virtual network kernel devices.
+
+- VLAN
+
+  Virtual Local Area Network
+
+- Wr
+
+  Write
+
+- Worker lcore
+
+  Any *lcore* that is not the *main lcore*.
+
+- WRED
+
+  Weighted Random Early Detection
+
+- WRR
+
+  Weighted Round Robin
+
+## Sample Applications
+
+> ​	通过一些简单样例的学习来掌握DPDK。
+>
+> ​	简单，独立的程序。
+>
+> ​	每个试图表现不同的特性。 
+
+### Compiling
+
+> ​	编译的方法。git clone下来接着按照文档操作一遍。
+>
+
+首先环境配置：
+
+```sh
+cd ~  # 或你喜欢的工作目录，比如 ~/dev
+git clone https://github.com/DPDK/dpdk.git
+cd dpdk
+meson setup build
+cd build
+meson configure -Dexamples=all
+ninja
+```
+
+Go to DPDK build directory:
+
+> ```
+> cd dpdk/<build_dir>
+> ```
+
+Enable examples compilation:
+
+> ```
+> meson configure -Dexamples=all
+> ```
+
+Build:
+
+> ```
+> ninja
+> ```
+
+### Command Line Sample Application
+
+> ​	命令行，这个程序就是展示交互API的使用方法。
+
+There are three simple commands:
+
+- add obj_name IP: Add a new object with an IP/IPv6 address associated to it.
+- del obj_name: Delete the specified object.
+- show obj_name: Show the IP associated with the specified object.
+
+退出命令行 ，Ctrl + D
+
+运行命令。
+
+> ​	那么注意，要分配hugepage,并且用sudo分配和执行命令。
+
+To run the application in a Linux environment, issue the following command:
+
+```sh
+$ ./<build_dir>/examples/dpdk-cmdline -l 0-3 -n 4
+```
+
+Refer to the *DPDK Getting Started Guide* for general information on running applications and the Environment Abstraction Layer (EAL) options.
+
+```sh
+❯ sudo ./examples/dpdk-cmdline -l 0-3 -n 4                                                              
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 1
+EAL: Detected static linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+example> help
+Demo example of command line interface in RTE
+
+This is a readline-like interface that can be used to
+debug your RTE application. It supports some features
+of GNU readline like completion, cut/paste, and some
+other special bindings.
+
+This demo shows how rte_cmdline library can be
+extended to handle a list of objects. There are
+3 commands:
+- add obj_name IP
+- del obj_name
+- show obj_name
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
