@@ -1,3 +1,5 @@
+> 在思考之前先行动.
+
 # Playing With Programs.
 
 > ​	一些安全中非常基本的话题。
@@ -338,6 +340,8 @@ a–z => 26–51
 
 ## web基础
 
+### 关于GET和POST以及基本网络工具和py库
+
 发起Http GET请求
 
 
@@ -596,7 +600,7 @@ $ curl -H "Host:challenge.localhost:80" -X POST "http://localhost:80/meet" -d "a
 
 A form using `application/x-www-form-urlencoded` content encoding (the default) sends a request where the body contains the form data in `key=value` pairs, with each pair separated by an `&` symbol, as shown below:
 
-> ​	用nc提交表单是比较麻烦的,要把header和body之间分开才可以.
+> ​	用nc提交表单是比较麻烦的,要把header和body之间分开才可以.并且注意多个参数的处理方法,长度也必须经过计算才可以得到.
 
 ```http
 POST /test HTTP/1.1
@@ -651,6 +655,245 @@ curl -v -X POST "http://localhost:80/hack" \
 
 > ​	注意中间的空格,没有空格就和在一起了,会出错.
 >
+
+### Redirects(重定位)
+
+> ​	也是一个有趣并且常见的话题.
+>
+
+原理就是:
+
+```py
+@app.route("/", methods=["GET"])
+def challenge_redirector():
+    if name_of_program_for(peer_process_of(flask.request.input_stream.fileno())) not in ["nc"]:
+        flask.abort(400, "You are using an incorrect client to access this resource!")
+
+    return flask.redirect(f"/{secret_endpoint}-gateway")
+
+
+@app.route(f"/{secret_endpoint}-gateway", methods=["GET"])
+def challenge():
+    if name_of_program_for(peer_process_of(flask.request.input_stream.fileno())) not in ["nc"]:
+        flask.abort(400, "You are using an incorrect client to access this resource!")
+
+    return f"""
+        <html>
+          <head><title>Talking Web</title></head>
+        <body>
+          <h1>Great job!</h1>
+          <p>{open("/flag").read().strip()}</p>
+        </body>
+        </html>
+    """
+```
+
+很简单,当我们请求的时候返回了一个新的URL.
+
+接着我们使用curl命令,-L能够直**接跟随重定向**来处理,非常方便,分析过程:
+
+```sh
+$ curl -v -L -H "Host:challenge.localhost:80" "http://localhost:80/"
+* Host localhost:80 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:80...
+* connect to ::1 port 80 from ::1 port 53122 failed: Connection refused
+*   Trying 127.0.0.1:80...
+* Connected to localhost (127.0.0.1) port 80
+* using HTTP/1.x
+> GET / HTTP/1.1
+> Host:challenge.localhost:80
+> User-Agent: curl/8.12.1
+> Accept: */*
+> 
+* Request completely sent off
+< HTTP/1.1 302 FOUND
+< Server: Werkzeug/3.0.6 Python/3.8.10
+< Date: Tue, 22 Jul 2025 15:59:38 GMT
+< Content-Type: text/html; charset=utf-8
+< Content-Length: 221
+< Location: /xOmLEvDu-qualify
+< Connection: close
+< 
+* shutting down connection #0
+* Issue another request to this URL: 'http://localhost:80/xOmLEvDu-qualify'
+* Hostname localhost was found in DNS cache
+*   Trying [::1]:80...
+* connect to ::1 port 80 from ::1 port 53124 failed: Connection refused
+*   Trying 127.0.0.1:80...
+* Connected to localhost (127.0.0.1) port 80
+* using HTTP/1.x
+> GET /xOmLEvDu-qualify HTTP/1.1
+> Host:challenge.localhost:80
+> User-Agent: curl/8.12.1
+> Accept: */*
+> 
+* Request completely sent off
+< HTTP/1.1 200 OK
+< Server: Werkzeug/3.0.6 Python/3.8.10
+< Date: Tue, 22 Jul 2025 15:59:38 GMT
+< Content-Type: text/html; charset=utf-8
+< Content-Length: 224
+< Connection: close
+< 
+
+        <html>
+          <head><title>Talking Web</title></head>
+        <body>
+          <h1>Great job!</h1>
+          <p>pwn.college{M4e0fOBc4jlqEJbSN9HQ48rt0u1.QX4kjMzwyM2gjMyEzW}</p>
+        </body>
+        </html>
+* shutting down connection #1
+```
+
+py的requests库也可以直接跟随重定向.
+
+### Cookies
+
+> ​	服务器保持无状态,防止占用过多的资源.
+
+Server给Client分配一段cookie,之后交互的过程中会自动携带上这一段cookie:
+
+1.用户登录认证（如登录状态维持）
+
+2.会话管理（如购物车、语言偏好）
+
+3.跟踪用户行为（广告/分析）
+
+比如:
+
+```txt
+* Mark bundle as not supporting multiuse
+< HTTP/1.1 302 FOUND
+< Server: Werkzeug/3.0.6 Python/3.8.10
+< Date: Wed, 23 Jul 2025 02:29:04 GMT
+< Content-Length: 189
+< Location: /
+< Set-Cookie: cookie=3c7d6a2b6b7ebc20bc71c719e8cac768; Path=/
+< Server: pwn.college
+< Connection: close
+```
+
+Server给我们分配了一段cookie.
+
+当我们使用curl带cookie去requests的时候:
+
+```sh
+$ curl -v -L -b "3c7d6a2b6b7ebc20bc71c719e8cac768" "http://localhost:80/"
+```
+
+如果使用nc带cookie的话:
+
+```sh
+$ nc 127.0.0.1 80
+GET / HTTP/1.1
+Host: 127.0.0.1
+Cookie: cookie=fc8ec903d4b8a0e0b30fb5ade530809b
+```
+
+有状态的Server保存上下文,requests应该会自动处理.
+
+一个开始时最简单的Server:
+
+```py
+#!/opt/pwn.college/python
+
+import flask
+import os
+
+app = flask.Flask(__name__)
+
+
+@app.route("/", methods=["GET"])
+def challenge():
+    if "Firefox" not in flask.request.headers.get("User-Agent"):
+        flask.abort(400, "You are using an incorrect client to access this resource!")
+
+    return f"""
+        <html>
+          <head><title>Talking Web</title></head>
+        <body>
+          <h1>Great job!</h1>
+          <p>{open("/flag").read().strip()}</p>
+        </body>
+        </html>
+    """
+
+
+app.secret_key = os.urandom(8)
+app.run("challenge.localhost", 80)
+```
+
+我们打起来一个Server监听客户端的连接.
+
+那么怎么自己给客户端做重定向.
+
+> ​	不会就找文档.
+
+https://flask.palletsprojects.com/en/stable/
+
+注意不要把域名指定错误了,妈的.
+
+### JavaScript
+
+用JS加上我们上面写的重定向的代码来搞浏览器的重定向:
+
+```html
+<html>
+    <head><title>GOGOGO</title></head>
+    <body>
+        <script>
+            window.location = "http://localhost:1337/"
+        </script>
+    </body>
+</html>
+```
+
+> ​	Exfiltration is the art of smuggling sensitive data out right under the nose of its owners: in this case, /challenge/client and /challenge/server.
+>
+> ​	这是比较复杂的.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
