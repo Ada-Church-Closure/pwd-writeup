@@ -1504,8 +1504,114 @@ gcc -shared -fPIC -o su.os exploit.c
 ## SQL Playground
 
 > ​	关于SQL,我们也接触的时间比较长,主要使用MySQL,现在可以来看看这个有意思的话题.
+>
+> 简单写了一些mysql的笔记:https://ada-church-closure.github.io/tech/mysql/,之后系统学习了数据库会做更多的补充.
 
-s
+不过这里基本就是一些简单的SQL练习.
+
+不过查表不太一样:
+
+```SQL
+select name from sqlite_master where type == "table"
+
+select sql from sqlite_master where name == "payloads"
+```
+
+用内置的一些function来过滤,比如**substr**.
+
+select给我手敲冒烟了,妈的.
+
+用limit = 1来做限制.
+
+```sql
+select secret from dataset where substr(secret,1,4) == "pwn." LIMIT 1
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

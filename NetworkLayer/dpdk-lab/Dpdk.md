@@ -704,7 +704,27 @@ Got packet: SRC MAC = 9C:71:3A:F5:DC:91
 >
 > ​	每个试图表现不同的特性。 
 
-### Compiling
+​	每当我们要跑代码的时候,利用usertools下的工具先对于大页内存进行设置,阅读一下help,一般按照以下的步骤来进行:(先分配2G,接着再进行挂载的操作)
+
+```sh
+❯ sudo python3 dpdk-hugepages.py --reserve 2G --pagesize 2M                                    
+❯ sudo python3 dpdk-hugepages.py --show
+Node  Pages  Size  Total  
+0      1024   2Mb    2Gb  
+No huge page filesystems mounted
+
+❯ sudo python3 dpdk-hugepages.py --mount
+
+❯ sudo python3 dpdk-hugepages.py --show
+Node  Pages  Size  Total  
+0      1024   2Mb    2Gb  
+
+Huge page filesystems mounted at: /dev/hugepages
+```
+
+
+
+### 1.Compiling HelloWorld
 
 > ​	编译的方法。git clone下来接着按照文档操作一遍。
 >
@@ -739,7 +759,154 @@ Build:
 > ninja
 > ```
 
-### Command Line Sample Application
+比如要编译helloworld项目:
+
+```
+meson configure -Dexamples=helloworld
+```
+
+然后:
+
+```
+ninja
+```
+
+接着:(注意权限sudo)
+
+```sh
+sudo ./<build_dir>/examples/dpdk-helloworld -l 0-3
+```
+
+正确运行有:
+
+```sh
+❯ sudo ./examples/dpdk-helloworld -l 0-3
+EAL: Detected CPU lcores: 32
+EAL: Detected NUMA nodes: 1
+EAL: Detected static linkage of DPDK
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'VA'
+hello from core 1
+hello from core 2
+hello from core 3
+hello from core 0
+```
+
+代表我们成功了.
+
+我们来分析一下这个程序:(第一个也是最简单的)
+
+```c
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <errno.h>
+#include <sys/queue.h>
+
+#include <rte_memory.h>
+#include <rte_launch.h>
+#include <rte_eal.h>
+#include <rte_per_lcore.h>
+#include <rte_lcore.h>
+#include <rte_debug.h>
+
+/* Launch a function on lcore. 8< */
+static int
+lcore_hello(__rte_unused void *arg)
+{
+	unsigned lcore_id;
+	lcore_id = rte_lcore_id();
+	printf("hello from core %u\n", lcore_id);
+	return 0;
+}
+/* >8 End of launching function on lcore. */
+
+/* Initialization of Environment Abstraction Layer (EAL). 8< */
+int
+main(int argc, char **argv)
+{
+	int ret;
+	unsigned lcore_id;
+
+	ret = rte_eal_init(argc, argv);
+	if (ret < 0)
+		rte_panic("Cannot init EAL\n");
+	/* >8 End of initialization of Environment Abstraction Layer */
+
+	/* Launches the function on each lcore. 8< */
+	RTE_LCORE_FOREACH_WORKER(lcore_id) {
+		/* Simpler equivalent. 8< */
+		rte_eal_remote_launch(lcore_hello, NULL, lcore_id);
+		/* >8 End of simpler equivalent. */
+	}
+
+	/* call it on main lcore too */
+	lcore_hello(NULL);
+	/* >8 End of launching the function on each lcore. */
+
+	rte_eal_mp_wait_lcore();
+
+	/* clean up the EAL */
+	rte_eal_cleanup();
+
+	return 0;
+}
+
+```
+
+1.初始化EAL环境:
+
+```C
+int
+main(int argc, char **argv)
+{
+	int ret;
+	unsigned lcore_id;
+
+	ret = rte_eal_init(argc, argv);
+	if (ret < 0)
+		rte_panic("Cannot init EAL\n");
+```
+
+这就是我们手动提供的两个参数,-l 0-3,制定CPU核心的编号.
+
+当环境初始化了之后,我们要在每个CPU核心上运行下面这个方法:
+
+```C
+static int
+lcore_hello(__rte_unused void *arg)
+{
+	unsigned lcore_id;
+	lcore_id = rte_lcore_id();
+	printf("hello from core %u\n", lcore_id);
+	return 0;
+}
+```
+
+下面是在每个核心上跑的function:
+
+```C
+RTE_LCORE_FOREACH_WORKER(lcore_id) {
+	/* Simpler equivalent. 8< */
+	rte_eal_remote_launch(lcore_hello, NULL, lcore_id);
+	/* >8 End of simpler equivalent. */
+}
+
+/* call it on main lcore too */
+lcore_hello(NULL);
+```
+
+或者是直接这样:
+
+```C
+rte_eal_remote_launch(lcore_hello, NULL, lcore_id);
+```
+
+
+
+
+
+### 2.Command Line Sample Application
 
 > ​	命令行，这个程序就是展示交互API的使用方法。
 
@@ -756,6 +923,10 @@ There are three simple commands:
 > ​	那么注意，要分配hugepage,并且用sudo分配和执行命令。
 
 To run the application in a Linux environment, issue the following command:
+
+-l是指定CPU核心的编号
+
+-n指的是内存通道
 
 ```sh
 $ ./<build_dir>/examples/dpdk-cmdline -l 0-3 -n 4
@@ -786,9 +957,24 @@ extended to handle a list of objects. There are
 - show obj_name
 ```
 
+基本用法就是:
 
+```sh
+example> add man 127.0.0.1
+Object man added, ip=127.0.0.1
+example> show
+Bad arguments
+example> show man
+Object man, ip=127.0.0.1
+example> del man
+Object man removed, ip=127.0.0.1
+example> show man
+Bad arguments
+```
 
+### 3.Ethtool Sample Application
 
+数据平面的开发包.
 
 
 
