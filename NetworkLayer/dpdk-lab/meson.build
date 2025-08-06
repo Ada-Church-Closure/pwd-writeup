@@ -1,8 +1,6 @@
-project('dpdk_rx', 'c')
+# a top build file
+project('dpdk-lab', 'c')
 
-dpdk_dep = dependency('libdpdk', required : true)
+dpdk_dep = dependency('libdpdk', required: true)
 
-executable('dpdk_rx_mac',
-  'main.c',
-  dependencies : dpdk_dep
-)
+subdir('basic-fwd')
