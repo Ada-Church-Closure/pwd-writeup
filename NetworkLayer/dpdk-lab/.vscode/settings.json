@@ -3,6 +3,11 @@
         "inttypes.h": "c",
         "rte_eal.h": "c",
         "rte_ethdev.h": "c",
-        "rte_mbuf.h": "c"
-    }
+        "rte_mbuf.h": "c",
+        "stdalign.h": "c",
+        "stdint.h": "c",
+        "rte_cycles.h": "c"
+    },
+    "C_Cpp.default.compileCommands": "/home/ada/pwd-writeup/NetworkLayer/dpdk-lab/builddir/compile_commands.json",
+    "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild"
 }

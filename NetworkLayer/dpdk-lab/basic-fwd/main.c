@@ -1,3 +1,4 @@
+// 1.基本的在网卡之间转发数据包的程序
 // 这是一个基本的转发的dpdk的程序,我们努力搞清楚其中的每个细节,作为入门的学习
 
 #include <stdint.h>
@@ -290,14 +291,15 @@ main(int argc, char* argv[])
 * rte_pktmbuf_pool_create()：创建 mbuf 池，每个 mbuf 用来存储一个数据包
 * 参数解释：
 * "MBUF_POOL"：池的名字
-* NUM_MBUFS * nb_ports：总 mbuf 数量（根据端口数扩大）
-* MBUF_CACHE_SIZE：每个 lcore 缓存多少 mbuf
+* NUM_MBUFS * nb_ports：总 mbuf 数量（根据端口数扩大),每个端口上面都有NUM_MBUFS的内存?
+* MBUF_CACHE_SIZE：每个 lcore 缓存多少 mbuf--->涉及到缓存原理
 * 0：私有数据空间大小（我们不需要）
 * RTE_MBUF_DEFAULT_BUF_SIZE：默认数据包大小（2048）
 * rte_socket_id()：NUMA 优化，分配内存在当前 socket 上
 */
     mbuf_pool = rte_pktmbuf_pool_create("MBUF_POOL", NUM_MBUFS * nb_ports, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
-
+    
+    // 初始化失败
     if(mbuf_pool == NULL){
         rte_exit(EXIT_FAILURE, "Cannot create mbuf pool!!!\n");
     }

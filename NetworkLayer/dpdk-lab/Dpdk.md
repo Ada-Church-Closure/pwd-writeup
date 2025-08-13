@@ -1334,7 +1334,7 @@ rte_pktmbuf_alloc() 和 rte_pktmbuf_free()：分配和释放mbuf。
 #define BURST_SIZE 32
 
 /*
-* @function 初始化网卡端口port
+* @function 初始化网卡端口port,比较有移植性
 * @params port:网卡端口编号,dpdk给网卡从0开始编号
 * @params *mbuf_pool:指向内存池的指针,供RX队列来接收数据包使用
 */
@@ -1510,12 +1510,14 @@ main(int argc, char* argv[])
     uint16_t portid;
 
     // 初始化EAL环境:EAL内存分配,核心绑定等
+    // 根据我们给定的参数进行初始化
     int ret = rte_eal_init(argc, argv);
     if(ret < 0){
         rte_exit(EXIT_FAILURE, "Error with the EAL initialization!!!\n");
     }
 
     // rte_init会消耗掉前面的参数,这里要进行更新
+    // ???
     argc -= ret;
     argv += ret;
 
@@ -1563,8 +1565,28 @@ main(int argc, char* argv[])
 }
 ```
 
-> ​	抄代码并且单独运行也是很好的方法,但是还有很多的细节要理解.
+> ​	抄代码并且单独运行也是很好的方法,但是还有很多的细节要理解,要理解并且熟练.
 >
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
