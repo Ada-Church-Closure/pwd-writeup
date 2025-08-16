@@ -6,7 +6,13 @@
         "rte_mbuf.h": "c",
         "stdalign.h": "c",
         "stdint.h": "c",
-        "rte_cycles.h": "c"
+        "rte_cycles.h": "c",
+        "rte_flow.h": "c",
+        "common.h": "c",
+        "snippet_match_ipv4.h": "c",
+        "rte_net.h": "c",
+        "rte_compat.h": "c",
+        "rte_argparse.h": "c"
     },
     "C_Cpp.default.compileCommands": "/home/ada/pwd-writeup/NetworkLayer/dpdk-lab/builddir/compile_commands.json",
     "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild"

@@ -5,3 +5,4 @@
 涵盖平台包括：
 
 - [pwn.college](https://pwn.college/)
+- [pwnable](https://pwnable.kr)
