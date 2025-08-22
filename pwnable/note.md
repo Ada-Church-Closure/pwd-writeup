@@ -750,9 +750,9 @@ uid=1001(passcode) gid=1001(passcode) groups=1001(passcode)
 ```py
 from pwn import * 
 
-buf =b"A" * 96      # offset to ???
-buf += p32(0x0804c014)  # passcode1 pointing to ???
-buf += '0x080492c3'		# the got entry of ???
+buf = b"A" * ??     # offset to ???
+buf += p32(?????????)  # passcode1 pointing to ???
+buf += '?????????'		# the got entry of ???
 
 print(buf) # 注意python3严格区分str和bytes,这个程序用py2处理.
 ```
@@ -762,13 +762,116 @@ print(buf) # 注意python3严格区分str和bytes,这个程序用py2处理.
 
 ### random
 
+看看这个C程序:
 
+```C
+#include <stdio.h>
 
+int main(){
+        unsigned int random;
+        random = rand();        // random value!
+        unsigned int key=0;
+    
+        scanf("%d", &key);
+    
+        if( (key ^ random) == 0xcafebabe ){
+                printf("Good!\n");
+                setregid(getegid(), getegid());
+                system("/bin/cat flag");
+                return 0;
+        }
+    
+        printf("Wrong, maybe you should try 2^32 cases.\n");
+        return 0;
+}
+```
 
+拿到random之后做异或运算要等于某些值.
 
+直接在gdb内部临时计算某些值的大小:
 
+```py
+print/x 0x1234 ^ 0x5678    # 异或（输出十六进制）
+print/d 10 + 20            # 加法（十进制）
+print/t 0b1010 << 2        # 左移（二进制输出）
+```
 
+这个就非常简单.
 
+### input2
+
+先来看看代码:
+
+```C
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+int main(int argc, char* argv[], char* envp[]){
+        printf("Welcome to pwnable.kr\n");
+        printf("Let's see if you know how to give input to program\n");
+        printf("Just give me correct inputs then you will get the flag :)\n");
+
+        // argv
+        if(argc != 100) return 0;
+        if(strcmp(argv['A'],"\x00")) return 0;
+        if(strcmp(argv['B'],"\x20\x0a\x0d")) return 0;
+        printf("Stage 1 clear!\n");
+
+        // stdio
+        char buf[4];
+        read(0, buf, 4);
+        if(memcmp(buf, "\x00\x0a\x00\xff", 4)) return 0;
+        read(2, buf, 4);
+        if(memcmp(buf, "\x00\x0a\x02\xff", 4)) return 0;
+        printf("Stage 2 clear!\n");
+
+        // env
+        if(strcmp("\xca\xfe\xba\xbe", getenv("\xde\xad\xbe\xef"))) return 0;
+        printf("Stage 3 clear!\n");
+
+        // file
+        FILE* fp = fopen("\x0a", "r");
+        if(!fp) return 0;
+        if( fread(buf, 4, 1, fp)!=1 ) return 0;
+        if( memcmp(buf, "\x00\x00\x00\x00", 4) ) return 0;
+        fclose(fp);
+        printf("Stage 4 clear!\n");
+
+        // network
+        int sd, cd;
+        struct sockaddr_in saddr, caddr;
+        sd = socket(AF_INET, SOCK_STREAM, 0);
+        if(sd == -1){
+                printf("socket error, tell admin\n");
+                return 0;
+        }
+        saddr.sin_family = AF_INET;
+        saddr.sin_addr.s_addr = INADDR_ANY;
+        saddr.sin_port = htons( atoi(argv['C']) );
+        if(bind(sd, (struct sockaddr*)&saddr, sizeof(saddr)) < 0){
+                printf("bind error, use another port\n");
+                return 1;
+        }
+        listen(sd, 1);
+        int c = sizeof(struct sockaddr_in);
+        cd = accept(sd, (struct sockaddr *)&caddr, (socklen_t*)&c);
+        if(cd < 0){
+                printf("accept error, tell admin\n");
+                return 0;
+        }
+        if( recv(cd, buf, 4, 0) != 4 ) return 0;
+        if(memcmp(buf, "\xde\xad\xbe\xef", 4)) return 0;
+        printf("Stage 5 clear!\n");
+
+        // here's your flag
+        setregid(getegid(), getegid());
+        system("/bin/cat flag");
+        return 0;
+}
+```
 
 
 
