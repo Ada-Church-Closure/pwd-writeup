@@ -326,7 +326,7 @@ payloads = "/challenge \n cat /flag"
 
 SQL注入也比较常见,主要就是登陆的绕过,尝试作为admin来进行登陆的操作.
 
-​	bypass---认证绕过.就比如你说自己的username是admin,然后passwd是passwd一样,结果就登进了管理员的dashboard,这是最简单的情况,但实际上很多老网站还有类似的漏洞.
+​	bypass---认证绕过.就比如你说自己的username是admin,然后passwd是passwd一样,结果就登进了管理员的dashboard,这是最简单的情况,看似很愚蠢,但实际上很多老网站还有类似的漏洞.
 
 比如这样一个简单的server:
 
@@ -554,6 +554,7 @@ def boolean_blind():
     for i in range(len(FLAG_PREFIX) + 1, 100):
         for c in string.printable:
             # 构造Payload：逐字符验证
+            # 这个比较吃操作
             payload = {
                 "username": f"admin' AND SUBSTR(password,{i},1)='{c}' --",
                 "password": "dummy"
@@ -587,17 +588,25 @@ if __name__ == "__main__":
 
 这是第一次让我感受到暴力美学.
 
+#### Cross Site Scripting
+
+[python -m http.server](https://docs.python.org/3/library/http.server.html)
+
+[JavaScript Fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch)
+
+​	XSS:跨站脚本攻击.本次是Stored XSS的挑战(存储型XSS),我们将自己的代码注入Server,受害者是其余的用户.
+
+| **类型**      | **触发方式**                       | **持久性**     | **典型案例**           |
+| :------------ | :--------------------------------- | :------------- | :--------------------- |
+| **存储型XSS** | 恶意代码存储在服务器（如论坛评论） | 长期有效       | 窃取访问用户的Cookie   |
+| **反射型XSS** | 恶意代码通过URL参数传递            | 单次生效       | 钓鱼攻击中的伪造登录页 |
+| **DOM型XSS**  | 前端JavaScript动态生成恶意内容     | 依赖客户端环境 | 篡改页面DOM元素        |
 
 
 
+![](file:///home/ada/Downloads/1680f792d1f308.png)
 
-
-
-
-
-
-
-
+注意使用py的"""三引号,注入多行html代码.
 
 
 
