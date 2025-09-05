@@ -80,6 +80,9 @@ Hugepagesize:       2048 kB
 Hugetlb:         4194304 kB
 ```
 
+> ​	实际上这里可以使用官方dpdk库的py工具,不过你可以手动操作一遍加深一下理解.
+>
+
 
 
 DPDK编译和运行的环境变量：
@@ -1323,7 +1326,7 @@ rte_pktmbuf_alloc() 和 rte_pktmbuf_free()：分配和释放mbuf。
 #define TX_RING_SIZE 1024
 
 // 内存缓冲区的大小为8191,所有数据包都在这里处理
-// 也就是有8191个mbuf,大多数情况下一个mbuf对应一个data packet,如果太大的话就可能会分段发送
+// 也就是有8191个mbuf,大多数情况下一个mbuf对应一个data packet,如果太大的话就可能会分段
 #define NUM_MBUFS 8191
 
 // 每个lcore(逻辑核)能缓存的mbuf的数量为250
