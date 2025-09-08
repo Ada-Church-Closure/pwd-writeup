@@ -233,11 +233,34 @@ attatch的方法把一个buffer变成indrectbuffer,附加到direct buffer上面�
 怎么处理这样的多进程的情况?
 
 - primary processes, which can initialize and which have full permissions on shared memory
-- secondary processes, which cannot initialize shared memory, but can attach to pre- initialized shared memory and create objects in it.
+- secondary processes, which cannot initialize shared memory, but can attach to pre- initialized shared memory and create objects in it.--->不能创建共享内存,但是可以attach到预先分配的共享内存,并且操作内部的数据包.
 
 两种进程,主进程和辅助进程.
 
+可用的参数:
 
+- `--proc-type:` for specifying a given process instance as the primary or secondary DPDK instance--->把一个给定的进程实例指定为主进程或者辅助进程
+- `--file-prefix:` to allow processes that do not want to co-operate to have different memory regions
+
+看几个例子:
+
+### sample
+
+#### simple_mp
+
+两个线程,两个CPU,使用共享内存来进行交互,send和receive,怎么实现?
+
+The application has two threads:
+
+- sender
+
+  Reads from stdin, converts them to messages, and enqueues them to the ring.
+
+- receiver
+
+  Dequeues any messages on the ring, prints them, then frees the buffer.
+
+  
 
 
 
