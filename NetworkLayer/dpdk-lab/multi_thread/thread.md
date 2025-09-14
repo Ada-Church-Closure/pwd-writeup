@@ -1,372 +1,324 @@
-# 多线程/数据包处理
+# 多线程/数据包处理的库
 
-在了解了简单的转发的机制之后,我们来理解多线程的情况.
+1.包需要处理（**加解密，完整性验证，窗口验证**）的情况
 
-收到的包需要处理,比如加解密,完整性验证,窗口验证的情况,对比单线程和多线程之间的区别.
+2.一个单线程和多线程情况的**对比**
 
-还是读文档.
+实际上一个lcore就是一个 用户态调度 的线程.
 
-这里我们还是从一些比较基础的概念入手:
+我们直接来看这个L2 forward的代码,就是在本目录下的代码.
 
-## 1.内存管理
+![../_images/l2_fwd_vm2vm.svg](https://doc.dpdk.org/guides/_images/l2_fwd_vm2vm.svg)
 
-### 1. Lcore Variables
+可以用于两个vm之间的流量转发.
 
-#### 概述
+运行可用的参数:
 
-Lcore变量:每个EAL线程和注册的非EAL线程保存一个唯一的值.
-
-variable Handle---就是一个不透明的指针,用来分配和访问这个变量的值.
-
-Allocation:
-
-​	使用 `RTE_LCORE_VAR_ALLOC`或 `RTE_LCORE_VAR_INIT`宏来为 Lcore 变量分配存储空间并初始化句柄,分配操作通常在**模块初始化时**进行，但也可以在任何时候进行。
-
-Lcore 变量的**生命周期**与创建它的线程**无关**,只有在最后clean的时候才会结束.
-
-每个 Lcore 变量都拥有 `RTE_MAX_LCORE`个值，每个可能存在的 lcore id 都对应一个值。
-
-从 Lcore 变量**创建的那一刻起**，在整个 EAL 的生命周期内（即直到调用 `rte_eal_cleanup()`之前），都可以访问该 Lcore 变量的所有值。
-
-Lcore 变量**不需要被释放，并且也无法被释放**。
-
-
-
-变量可以被其他线程访问,但是只能被owner频繁读写.
-
-使用原子读写的方式防止发生错误.
-
-这个变量通常是一个结构体.(不要对于这个结构体进行内存对齐的操作)
-
-变量默认初始化为0,并且不再hugepages中.
-
-我们来看一个例子:
-
-```C
-// 创建这样的一个结构体的类型,每个核心都要维护这样的一个数据结构
-struct foo_lcore_state {
-        int a;
-        long b;
-};
-
-// 创建一个handle
-static RTE_LCORE_VAR_HANDLE(struct foo_lcore_state, lcore_states);
-
-long foo_get_a_plus_b(void)
-{
-    // 使用VAR这个宏,相当于是可以快捷地访问当前执行线程自己持有的变量
-        const struct foo_lcore_state *state = RTE_LCORE_VAR(lcore_states);
-        return state->a + state->b;
-}
-
-RTE_INIT(rte_foo_init)
-{
-    // 这个宏直接为每个lcore分配内存并且初始化handle
-        RTE_LCORE_VAR_ALLOC(lcore_states);
-
-        unsigned int lcore_id;
-        struct foo_lcore_state *state;
-        RTE_LCORE_VAR_FOREACH(lcore_id, state, lcore_states) {
-                /* initialize state */
-            	/* 这里,你就可以对于lcore的变量进行一些初始化的操作 */
-        }
-
-        /* other initialization */
-}
+```sh
+./<build_dir>/examples/dpdk-l2fwd [EAL options] -- -p PORTMASK
+                               [-P]
+                               [-q NQ]
+                               --[no-]mac-updating
+                               [--portmap="(port, port)[,(port, port)]"]
 ```
 
-> ​	相当于就是每个CPU负责一个线程,然后都有自己独立的变量,分配在内存里面,但是不在hugepage里面,这部分变量在内存里面是连续的(为了性能),这样的独立变量有什么实际作用?
+例子:
+
+To run the application in linux environment with 4 lcores, 16 ports and 8 RX queues per lcore and MAC address updating enabled, issue the command:
+
+```sh
+./<build_dir>/examples/dpdk-l2fwd -l 0-3 -- -q 8 -p ffff
+```
+
+To run the application in linux environment with 4 lcores, 4 ports, 8 RX queues per lcore, to forward RX traffic of ports 0 & 1 on ports 2 & 3 respectively and vice versa, issue the command:
+
+```sh
+./<build_dir>/examples/dpdk-l2fwd -l 0-3 -- -q 8 -p f --portmap="(0,2)(1,3)"
+```
+
+ds的翻译:
+
+# 
+
+## 16. L2 转发
+
+- **源 MAC 地址** 被替换为 **TX_PORT 的 MAC 地址**
+- **目的 MAC 地址** 被替换为 **02:00:00:00:00:TX_PORT_ID**
+
+应用程序需要许多命令行选项 ：
+
+```
+./<build_dir>/examples/dpdk-l2fwd [EAL options] -- -p PORTMASK
+                               [-P]
+                               [-q NQ]
+                               --[no-]mac-updating
+                               [--portmap="(port, port)[,(port, port)]"]
+```
+
+其中：
+
+- `-p PORTMASK`：要配置的端口的十六进制位掩码。
+- `-P`：（可选）将所有端口设置为**混杂模式**，**以便无论 MAC 目的地址如何都接受数据包。**没有此选项，则仅接受 MAC 目的地址设置为端口以太网地址的数据包。
+- `-q NQ`：**每个 lcore 的最大队列数**（默认为 1）。
+- `--[no-]mac-updating`：启用或禁用 **MAC 地址更新**（默认启用）。
+- `--portmap="(port,port)[,(port,port)]"`：确定**转发端口映射**。
+
+要在 linux 环境中运行应用程序，使用 4 个 lcore、16 个端口、每个 lcore 8 个 RX 队列并启用 MAC 地址更新，请发出命令：
+
+```sh
+./<build_dir>/examples/dpdk-l2fwd -l 0-3 -- -q 8 -p ffff
+```
+
+要在 linux 环境中运行应用程序，使用 4 个 lcore、4 个端口、每个 lcore 8 个 RX 队列，将端口 0 和 1 的 RX 流量分别转发到端口 2 和 3，反之亦然，请发出命令：
+
+```sh
+./<build_dir>/examples/dpdk-l2fwd -l 0-3 -- -q 8 -p f --portmap="(0,2)(1,3)"
+```
+
+## 测试程序
+
+创建虚拟网卡,来进行转发的测试:--->我们先创建了这样的虚拟网卡对.
+
+```sh
+# 创建一对 veth设备，命名为 veth0 和 veth1
+sudo ip link add veth0 type veth peer name veth1
+
+# 配置IP地址（可选，用于辅助测试）
+sudo ip addr add 192.168.1.1/24 dev veth0
+sudo ip addr add 192.168.1.2/24 dev veth1
+
+# 启动设备
+sudo ip link set veth0 up
+sudo ip link set veth1 up
+
+# 查看设备状态及MAC地址
+ip link show veth0
+ip link show veth1
+```
+
+现在比如说我们要让这个两个端口之间进行转发的操作:
+
+```sh
+sudo ./build/examples/dpdk-l2fwd -l 0-1 -n 4 --vdev=net_pcap0,iface=veth0 --vdev=net_pcap1,iface=veth1 -- -p 0x3 --no-mac-updating
+```
+
+现在我们触发一些流量:
+
+```sh
+ping -I veth0 192.168.1.2
+```
+
+这里会unrecheable因为这是在l2层上面.
+
+结果就会打印一些状态:
+
+```sh
+Port statistics ====================================
+Statistics for port 0 ------------------------------
+Packets sent:                   658158
+Packets received:               658158
+Packets dropped:                     0
+Statistics for port 1 ------------------------------
+Packets sent:                   658158
+Packets received:               658158
+Packets dropped:                     0
+Aggregate statistics ===============================
+Total packets sent:            1316316
+Total packets received:        1316316
+Total packets dropped:               0
+====================================================
+
+Port statistics ====================================
+Statistics for port 0 ------------------------------
+Packets sent:                   674520
+Packets received:               674520
+Packets dropped:                     0
+Statistics for port 1 ------------------------------
+Packets sent:                   674520
+Packets received:               674520
+Packets dropped:                     0
+Aggregate statistics ===============================
+Total packets sent:            1349040
+Total packets received:        1349040
+Total packets dropped:               0
+====================================================
+```
+
+接下来我们再来看加解密功能的l2转发应用.
+
+## 14. 带加密功能的L2转发
+
+> 单向的只能加密或者解密的操作.
+
+- **目标端口** 由启用的端口掩码决定（例如端口掩码 `0xf` 时，端口0和1互转，端口2和3互转）。
+- **MAC地址更新**（可选）： 源MAC替换为 **TX端口的MAC地址** 目的MAC替换为 **02:00:00:00:00:TX_PORT_ID**
+
+#### **加解密的基本问题**
+
+加密和认证:这里AES是对称加密.
+
+1.加密 用AES-CBC算法和一个128bit密钥加密 每一个块加密依赖于前一个块的密文
+
+2.认证--->Authentication 用SHA1-HMAC生成认证码 接收方用key重新计算HMAC保证数据的**完整性**
+
+IV--->种子?初始化的向量
+
+
+
+#### **命令行参数**
+
+```C
+./<build_dir>/examples/dpdk-l2fwd-crypto [EAL参数] -- [应用参数]
+```
+
+| 参数                    | 说明                                                         |
+| ----------------------- | ------------------------------------------------------------ |
+| `-p PORTMASK`           | 十六进制端口掩码（默认启用所有端口）                         |
+| `-q NQ`                 | 每个lcore的队列数（默认1）                                   |
+| `-s`                    | 单核心管理所有端口                                           |
+| `-T PERIOD`             | 统计信息打印间隔（秒）                                       |
+| `--cdev_type HW/SW/ANY` | 密码设备类型：硬件/软件/任意（默认ANY）                      |
+| `--chain`               | 操作链：`CIPHER_HASH`（加密后哈希）、`HASH_CIPHER`、`CIPHER_ONLY`、`HASH_ONLY` 或 `AEAD`（默认 `CIPHER_HASH`） |
+| `--cipher_algo`         | 加密算法（默认 `aes-cbc`）                                   |
+| `--cipher_op`           | 加密操作：`ENCRYPT` 或 `DECRYPT`（默认加密）                 |
+| `--cipher_key`          | 加密密钥（字节用 `:` 分隔，如 `00:01:02...`）                |
+| `--auth_algo`           | 认证算法（默认 `sha1-hmac`）                                 |
+| `--auth_op`             | 认证操作：`GENERATE` 或 `VERIFY`（默认生成）                 |
+| `--aead_algo`           | AEAD算法（默认 `aes-gcm`）                                   |
+| `--sessionless`         | 不使用密码会话                                               |
+| `--cryptodev_mask`      | 密码设备掩码（默认所有设备）                                 |
+| `--[no-]mac-updating`   | 启用/禁用MAC地址更新（默认启用）                             |
+
+#### **示例命令**
+
+```sh
+./l2fwd-crypto -l 0-1 --vdev "crypto_aesni_mb0" --vdev "crypto_aesni_mb1" -- \
+    -p 0x3 --chain CIPHER_HASH \
+    --cipher_op ENCRYPT --cipher_algo aes-cbc \
+    --cipher_key 00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f \
+    --auth_op GENERATE --auth_algo aes-xcbc-mac \
+    --auth_key 10:11:12:13:14:15:16:17:18:19:1a:1b:1c:1d:1e:1f
+```
+
+> **注意**：
 >
-> ​	本地数据的统计,来进行一些调整的操作,但比如你如果要统计一共有多少数据包,那就要遍历从而聚合数据对么.
+> - 需确保密码设备支持指定操作（硬件设备需绑定DPDK驱动，虚拟设备需通过 `--vdev` 创建）。
+> - 每个以太网端口需对应一个密码设备。
+> - 所有密码设备使用相同的会话配置。
 
-#### 实现/设计原理
+#### **密码设备初始化**
 
-lcore变量的设计思想.
+1. **检查设备能力**：
 
-buffer:这些变量就是在heap上分配的.--->分配失败就直接失败,用户不用进行错误处理这样的操作.
+   ```sh
+   cap = check_device_support_cipher_algo(options, &dev_info, cdev_id);
+   if (cap == NULL) return -1; // 设备不支持算法则报错
+   ```
 
-这些变量放在一组这样的结构体内部:
+2. **验证密钥/IV长度**：
 
-```C
-struct lcore_var_buffer {
-	char data[RTE_MAX_LCORE_VAR * RTE_MAX_LCORE];
-	struct lcore_var_buffer *prev;
-};
+   ```sh
+   if (check_supported_size(key_len, cap->min, cap->max, cap->increment) != 0)
+       return -1; // 长度不匹配则报错
+   ```
+
+我想处理成这样:
+
+![image-20250913211208449](../../../../mio/static/img/image-20250913211208449.png)
+
+当然这是一个单向加密的流程:
+
+创建一些虚拟设备来运行这个程序(最简单的情况):
+
+```sh
+❯ sudo ./examples/dpdk-l2fwd-crypto -l 0-1 --vdev "net_pcap0,iface=veth0" --vdev "net_pcap1,iface=veth1" --vdev "crypto_openssl0" --vdev "crypto_openssl1" -- -p 0x3 --chain CIPHER_ONLY --cipher_op ENCRYPT --cipher_algo aes-cbc --cipher_key 00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f --cipher_iv 11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00
 ```
 
-那么你也能注意到,这些变量之间通过**链表**来连接,用来最终进行释放的操作.
+做了这样的事情,单纯把一个port收到的数据包加密然后转发,另一边是对称的.
 
-```C
-static struct lcore_var_buffer *current_buffer;
+![../_images/l2_fwd_encrypt_flow.svg](https://doc.dpdk.org/guides/_images/l2_fwd_encrypt_flow.svg)
 
-/* initialized to trigger buffer allocation on first allocation */
-static size_t offset = RTE_MAX_LCORE_VAR;
+加密放进crypto队列,然后出队列改mac地址转发.
+
+运行问题,还是用类似的方法来触发一些流量:
+
+```sh
+Port statistics ====================================
+Statistics for port 0 ------------------------------
+Packets sent:                            30544
+Packets received:                        30574
+Packets dropped:                             0
+Statistics for port 1 ------------------------------
+Packets sent:                            30544
+Packets received:                        30574
+Packets dropped:                             0
+Crypto statistics ==================================
+Statistics for cryptodev 0 -------------------------
+Packets enqueued:                        30544
+Packets dequeued:                        30544
+Packets errors:                              0
+Statistics for cryptodev 1 -------------------------
+Packets enqueued:                        30544
+Packets dequeued:                        30544
+Packets errors:                              0
+Aggregate statistics ===============================
+Total packets received:                  61148
+Total packets enqueued:                  61088
+Total packets dequeued:                  61088
+Total packets sent:                      61088
+Total packets dropped:                       0
+Total packets crypto errors:                 0
+====================================================
+
+Port statistics ====================================
+Statistics for port 0 ------------------------------
+Packets sent:                            38781
+Packets received:                        38813
+Packets dropped:                             0
+Statistics for port 1 ------------------------------
+Packets sent:                            38781
+Packets received:                        38813
+Packets dropped:                             0
+Crypto statistics ==================================
+Statistics for cryptodev 0 -------------------------
+Packets enqueued:                        38781
+Packets dequeued:                        38781
+Packets errors:                              0
+Statistics for cryptodev 1 -------------------------
+Packets enqueued:                        38781
+Packets dequeued:                        38781
+Packets errors:                              0
+Aggregate statistics ===============================
+Total packets received:                  77626
+Total packets enqueued:                  77562
+Total packets dequeued:                  77562
+Total packets sent:                      77562
+Total packets dropped:                       0
+Total packets crypto errors:                 0
+====================================================
 ```
 
-用来跟踪buffer中已经分配了多少个字节.
+只有两个网卡相互ping的时候会出现这样的情况,暂时无法理解.
 
-handle
+应该是收到了一个数据包就开始疯狂的加密然后转发.
 
-​	Upon lcore variable allocation, the lcore variables API returns an opaque *handle* in the form of a pointer. The value of the pointer is `buffer->data + offset`.
+```py
+from scapy.all import *
+import time
 
-这里要找到某个变量,就相当于是指针 + 偏移量.
+# 配置接口和MAC地址
+iface = "veth0"
+dst_mac = "02:00:00:00:00:01"  # 目标MAC（需与DPDK配置一致）
+src_mac = "02:00:00:00:00:00"  # 源MAC（避免与DPDK冲突）
 
-要把一个baseptr和某个lcore的变量联系起来是比较直接的:
+# 构造自定义以太网帧
+pkt = Ether(src=src_mac, dst=dst_mac)/Raw(load=b"TEST_PAYLOAD_1234")
 
-```C
-static inline void *
-rte_lcore_var_lcore(unsigned int lcore_id, void *handle)
-{
-	RTE_ASSERT(handle != NULL);
-	return RTE_PTR_ADD(handle, lcore_id * RTE_MAX_LCORE_VAR);
-}
+# 发送并监听响应（需在另一终端抓包）
+sendp(pkt, iface=iface, loop=1, inter=0.1, verbose=True)
 ```
 
-直接把baseptr和偏移量相加即可.
-
-内存布局:
-
-lcore变量/index静态数组
-
-比如我们给两个core各分配两种不同的struct变量--->注意就是每个lcore的变量内存布局是相同的:
-
-RTE_MAX_LCORE--->2 最多有两个lcore.
-
-RTE_MAX_LCORE_VAR--->64 lcore 变量最多有64个字节.
-
-```C
-/* -- Lcore variables -- */
-/* rte_x.c */
-struct x_lcore
-{
-    int a;
-    char b;
-};
-static RTE_LCORE_VAR_HANDLE(struct x_lcore, x_lcores);
-RTE_LCORE_VAR_INIT(x_lcores);
-
-/* rte_y.c */
-struct y_lcore
-{
-    long c;
-    long d;
-};
-static RTE_LCORE_VAR_HANDLE(struct y_lcore, y_lcores);
-RTE_LCORE_VAR_INIT(y_lcores);
-```
-
-那么实际上的内存布局就是这样的:
-
-![image-20250907154608007](../../../../mio/static/img/image-20250907154608007.png)
-
-可以看到内存中是连续的,性能会很好.
-
-Lcore Id Index Static Array---lcore id的一个静态数组,这相当于是另外一种分配的方式.
-
-![image-20250907162231886](../../../../mio/static/img/image-20250907162231886.png)
-
-注意这样可能会造成内存碎片.
-
-能够避免CPU硬件prefetch的问题,总之很好地提升了性能.
-
-替代方案就是静态数组或者是线程本地存储.
-
-TLS--->变量和线程的生命周期就是相关的.
-
-> ​	注意,lcore变量的处理方式类似于传统的多线程,但是也不一样,从内存的视角来看是类似的,但是生命周期和共享的方式肯定不同.
->
-> ​	高速创建并且销毁线程就会导致性能下降.
-
-### 2.Memory Pool Library
-
-关于内存池的内容.
-
-基于ring,做对象的分配.
-
-每个core会分配一小部份cache--->防止大量的CAS,提升性能.
-
-![image-20250908083830730](../../../../mio/static/img/image-20250908083830730.png)
-
-这里的cache其实就是类似于一个指针数组.
-
-handler--->有硬件外设的情况下.
-
-### 3.Packet Library
-
-我们先理解是干什么的:
-
-|                  | Mempool Library (内存池库)                                   | Mbuf (报文缓冲区)                                            |
-| :--------------- | :----------------------------------------------------------- | ------------------------------------------------------------ |
-| **角色定位**     | **内存管理者**：负责高效、安全地“生产”和“回收”内存对象       | **内存使用者**：是内存池“生产”出来的对象，用于承载和描述数据包 |
-| **主要目的**     | 预分配和高效管理**固定大小**的内存对象，减少动态分配开销和碎片 | 存储数据包的**元数据**和**实际数据**，支持零拷贝操作和链式结构 |
-| **本质**         | 一个**对象池**（Object Pool）或**内存分配器**                | 一个**数据结构**，是内存池中分配出来的一个具体对象           |
-| **关键操作**     | 创建内存池 (`rte_mempool_create`)、批量获取/归还对象 (`rte_mempool_get_bulk`) | 获取数据指针 (`rte_pktmbuf_mtod`)、克隆 (`rte_pktmbuf_clone`)、释放 (`rte_pktmbuf_free`) |
-| **性能设计重点** | 无锁环形队列、每核缓存（Local Cache）、NUMA 亲和性           | 缓存行对齐、热点字段分离、硬件卸载标志位                     |
-| **关系**         | 是 **mbuf 的工厂和仓库**                                     | 是 **mempool 生产出来的产品**                                |
-
-​	mempool进行内存的分配,生产出来mbuf给我们存放数据包使用--->实际上可以存放任意的我们设计好的数据结构.
-
-metadata直接嵌入packetbuf内部.
-
-这是一个mbuf承载一个数据包的情况:
-
-![image-20250908091011039](../../../../mio/static/img/image-20250908091011039.png)
-
-如果一个数据包过于大,比如jumbo frame,我们就会使用链表的形式,采用多个数据包:
-
-(注意对于链式的mbuf来说,只有第一个mbuf携带元数据)![image-20250908091106032](../../../../mio/static/img/image-20250908091106032.png)
-
-Buffers Stored in Memory Pools
-
-mbuf中存放了自己在mempool中的地址,当free的时候,就会return到原来的mempool中去.
-
-direct和indirect buffer--->当需要复制或者分段的时候非常方便,就相当于存放了一个指针.
-
-attatch的方法把一个buffer变成indrectbuffer,附加到direct buffer上面去.
-
-每增加一个,这个direct buffer就会增加一个引用计数.
-
-直接使用rte_pktmbuf_clone()这个方法最好.
-
-### 4. Multi-process Support
-
-怎么处理这样的多进程的情况?
-
-- primary processes, which can initialize and which have full permissions on shared memory
-- secondary processes, which cannot initialize shared memory, but can attach to pre- initialized shared memory and create objects in it.--->不能创建共享内存,但是可以attach到预先分配的共享内存,并且操作内部的数据包.
-
-两种进程,主进程和辅助进程.
-
-可用的参数:
-
-- `--proc-type:` for specifying a given process instance as the primary or secondary DPDK instance--->把一个给定的进程实例指定为主进程或者辅助进程
-- `--file-prefix:` to allow processes that do not want to co-operate to have different memory regions
-
-看几个例子:
-
-### sample
-
-#### simple_mp
-
-两个线程,两个CPU,使用共享内存来进行交互,send和receive,怎么实现?
-
-The application has two threads:
-
-- sender
-
-  Reads from stdin, converts them to messages, and enqueues them to the ring.
-
-- receiver
-
-  Dequeues any messages on the ring, prints them, then frees the buffer.
-
-  
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+直接构造ethernet frame来测试.
 
 
 
