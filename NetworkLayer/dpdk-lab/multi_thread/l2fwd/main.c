@@ -40,6 +40,16 @@
 
 static volatile bool force_quit;
 
+// 更改eth地址
+#define MARK_ETHER_TYPE 0x88B5
+
+
+// 我想用来做时间的统计
+static uint64_t start_cycles = 0;
+static uint64_t end_cycles = 0;
+bool begin_flag = false;
+bool end_flag = false;
+
 /* MAC updating enabled by default */
 // 是否自动更新mac地址
 static int mac_updating = 1;
@@ -52,6 +62,9 @@ static int promiscuous_on;
 #define MAX_PKT_BURST 32
 #define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
 #define MEMPOOL_CACHE_SIZE 256
+// 尝试添加一个头部字段.
+// 24-39都是可以自定义的字段.
+// #define MBUF_F_FORWARDED (1ULL << 30)
 
 /*
  * Configurable number of RX/TX ring descriptors
@@ -114,6 +127,25 @@ struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 /* A tsc-based timer responsible for triggering statistics printout */
 static uint64_t timer_period = 10; /* default period is 10 seconds */
 
+// 先模拟一个简单的"加密"的过程
+// 可以使用len来模拟加解密的占比
+static void dummy_encrypt(struct rte_mbuf* m, int len){
+	// 返回指向数据包头部的指针,类型自定义
+	char* data = rte_pktmbuf_mtod( m ,char*);
+	// 确定加密长度
+	int to_process_len = RTE_MIN(len, rte_pktmbuf_data_len(m));
+
+	for(int index = 0; index < to_process_len; ++index){
+		// 把所有东西随便异或来制造CPU开销
+		data[index] ^= 0x8B;
+	}
+	// 理论上来说,每个包加密都会进行打印的操作
+	// printf("Encrypted successfully!!!\n");
+	// sleep(5);
+}
+
+
+
 /* Print out statistics on packets dropped */
 // 打印port上数据包转发的情况
 static void
@@ -159,7 +191,14 @@ print_stats(void)
 		   total_packets_rx,
 		   total_packets_dropped);
 	printf("\n====================================================\n");
+	// if(total_packets_rx > 2000){
+	// 	end_cycles = rte_get_timer_cycles();
+	// 	uint64_t hz = rte_get_timer_hz();
+	// 	double seconds = (double)(end_cycles - start_cycles) / hz;
 
+	// 	printf("Forwarded 1000 frames in %.5f seconds\n", seconds);
+	// 	printf("The speed is %.5f frames/s... \n", (double)(1000 / seconds));
+	// }
 	fflush(stdout);
 }
 
@@ -181,22 +220,41 @@ l2fwd_mac_updating(struct rte_mbuf *m, unsigned dest_portid)
 }
 
 /* Simple forward. 8< */
-// 简单的转发机制
+// 简单的转发机制--->先从rx取包,然后做mac更新(可选),然后tx队列进行转发(这个程序的基本逻辑)
+// 现在的逻辑是先不要进行无限的转发,现在我们基于简单的情况,拿到就无限转发
 static void
 l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
-{
+{	
+	// 如果已经转发了,那么就释放,不再进行转发的操作.
+	// if(m->ol_flags & MBUF_F_FORWARDED){
+	// 	rte_pktmbuf_free(m);
+	// 	return;
+	// }
+
 	unsigned dst_port;
 	int sent;
 	struct rte_eth_dev_tx_buffer *buffer;
+	struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+	// 设置标志位
 
+	// printf("Before set: ol_flags=0x%lx\n", m->ol_flags);
+	// m->ol_flags |= MBUF_F_FORWARDED;
+	// printf("After set: ol_flags=0x%lx\n", m->ol_flags);
+
+
+	// 获取目标端口,发给谁?
 	dst_port = l2fwd_dst_ports[portid];
 
 	if (mac_updating)
 		l2fwd_mac_updating(m, dst_port);
-
+	// 写入type,相当于是发包前进行更新
+	eth->ether_type = rte_cpu_to_be_16(MARK_ETHER_TYPE);
+	// 通过tx缓冲区发送给目标的端口
 	buffer = tx_buffer[dst_port];
 	sent = rte_eth_tx_buffer(dst_port, 0, buffer, m);
 	if (sent)
+	// 计数
+	// 这里的计数逻辑为什么有问题?
 		port_statistics[dst_port].tx += sent;
 }
 /* >8 End of simple forward. */
@@ -248,6 +306,7 @@ l2fwd_main_loop(void)
 		 */
 		// 定期强制刷新tx buffer内部的数据到tx发送队列中
 		diff_tsc = cur_tsc - prev_tsc;
+
 		if (unlikely(diff_tsc > drain_tsc)) {
 			// lcore遍历自己负责的每个port上的tx
 			for (i = 0; i < qconf->n_rx_port; i++) {
@@ -285,22 +344,68 @@ l2fwd_main_loop(void)
 		/* >8 End of draining TX queue. */
 
 		/* Read packet from RX queues. 8< */
-		// lcore遍历自己负责的每一个的port上的rx队列
+		// lcore遍历自己负责的每一个的port上的rx队列,从rx队列收包,然后交给上面的simple_forward的转发程序来处理
 		for (i = 0; i < qconf->n_rx_port; i++) {
 
 			portid = qconf->rx_port_list[i];
 			nb_rx = rte_eth_rx_burst(portid, 0,
 						 pkts_burst, MAX_PKT_BURST);
-
+			
 			if (unlikely(nb_rx == 0))
 				continue;
+			
+			// 这里开始了发包,记录时间
+			if(!begin_flag){
+				begin_flag = true;
+				uint64_t hhz = rte_get_timer_hz();
+				double start_seconds = (double)(rte_get_timer_cycles() - start_cycles) / hhz;
+				printf("Start cycles is set at %.5f seconds\n", start_seconds);
+			}
 
 			port_statistics[portid].rx += nb_rx;
+			// printf("Port ID: %d		rx: %d\n",portid, port_statistics[portid].rx);
+			if(!end_flag && port_statistics[portid].tx >= 1000){
+				end_flag = true;
+				end_cycles = rte_get_timer_cycles();
+				uint64_t hz = rte_get_timer_hz();
+				double seconds = (double)(end_cycles - start_cycles) / hz;
+				// 转发1000个包,结束记录时间
+				printf("Forwarded 1000 frames in %.5f seconds\n", seconds);
+				printf("The speed is %.5f frame/s... \n", (double)(1000 / seconds));
+			}
 
 			for (j = 0; j < nb_rx; j++) {
 				m = pkts_burst[j];
+				// 获取之前的这个私有字段,用这个字段来标记是否是被转发过了
+				// uint64_t* mark = rte_mbuf_to_priv(m);
+				// if(*mark == 1){
+				// 	rte_pktmbuf_free(m);
+				// 	continue;
+				// }
+				// // 准备被转发,那就进行一次标记
+				// *mark = 1;
+
+
+				// 更改一下逻辑
+				// 直接获取这个frame
+				struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+				// 判断以太头是否一样
+				// if(rte_is_same_ether_addr(&eth->src_addr, &l2fwd_ports_eth_addr[portid])){
+				// 	rte_pktmbuf_free(m);
+				// 	continue;
+				// }
+
+
+
+				//采用ether type的逻辑
+				if(rte_be_to_cpu_16(eth->ether_type) == MARK_ETHER_TYPE){
+					rte_pktmbuf_free(m);
+					continue;
+				}
 				// prefetch--->预取数据到CPU缓存
 				rte_prefetch0(rte_pktmbuf_mtod(m, void *));
+				// 模拟对于这个数据包进行加密的处理
+				dummy_encrypt(m, 256);
 				// 核心转发的逻辑,把接收到的数据包进行转发
 				l2fwd_simple_forward(m, portid);
 			}
@@ -310,6 +415,7 @@ l2fwd_main_loop(void)
 }
 
 // 运作一个lcore?
+// 一个线程处理了这样的事物:1.rx收包 2.加密 3. 改mac地址 4.tx队列发包
 static int
 l2fwd_launch_one_lcore(__rte_unused void *dummy)
 {
@@ -676,10 +782,14 @@ main(int argc, char **argv)
 	unsigned int nb_lcores = 0;
 	unsigned int nb_mbufs;
 
+	start_cycles = rte_get_timer_cycles();
 	/* Init EAL. 8< */
+	// 环境初始化
 	ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Invalid EAL arguments\n");
+
+	// 因为这里是分为两部分参数,eal参数和应用本身的参数
 	argc -= ret;
 	argv += ret;
 
@@ -698,6 +808,7 @@ main(int argc, char **argv)
 	/* convert to number of cycles */
 	timer_period *= rte_get_timer_hz();
 
+	// 获取可用网卡的数量
 	nb_ports = rte_eth_dev_count_avail();
 	if (nb_ports == 0)
 		rte_exit(EXIT_FAILURE, "No Ethernet ports - bye\n");
@@ -761,6 +872,9 @@ main(int argc, char **argv)
 			continue;
 
 		/* get the lcore_id for this port */
+		// 寻找可用的逻辑核心
+		// 相当于是从0号开始向后遍历
+		// 当disabled或者承载量满了的时候就向后遍历
 		while (rte_lcore_is_enabled(rx_lcore_id) == 0 ||
 		       lcore_queue_conf[rx_lcore_id].n_rx_port ==
 		       l2fwd_rx_queue_per_lcore) {
@@ -769,6 +883,7 @@ main(int argc, char **argv)
 				rte_exit(EXIT_FAILURE, "Not enough cores\n");
 		}
 
+		// 如果没有出现上面的两种情况就直接进行lcore的绑定
 		if (qconf != &lcore_queue_conf[rx_lcore_id]) {
 			/* Assigned a new logical core in the loop above. */
 			qconf = &lcore_queue_conf[rx_lcore_id];
@@ -785,8 +900,10 @@ main(int argc, char **argv)
 		nb_lcores * MEMPOOL_CACHE_SIZE), 8192U);
 
 	/* Create the mbuf pool. 8< */
+	// 创建mbuf pool来使用
+	// 注意这里创建了8bytes的私有区,我们想用来存放是否是已经转发过的字段
 	l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", nb_mbufs,
-		MEMPOOL_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
+		MEMPOOL_CACHE_SIZE, sizeof(uint64_t), RTE_MBUF_DEFAULT_BUF_SIZE,
 		rte_socket_id());
 	if (l2fwd_pktmbuf_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot init mbuf pool\n");

@@ -9,6 +9,6 @@ dpdk_dep = dependency('libdpdk', fallback: ['dpdk', 'dpdk_dep'])
 # subdir('rxtx_callbacks')
 # subdir('flow_filtering')
 # subdir('multi_process/simple_mp')
-# subdir('multi_thread/l2fwd')
-subdir('multi_thread/l2fwd-crypto')
+subdir('multi_thread/l2fwd')
+# subdir('multi_thread/l2fwd-crypto')
 

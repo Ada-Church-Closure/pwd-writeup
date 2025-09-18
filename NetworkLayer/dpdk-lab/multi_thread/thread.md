@@ -38,8 +38,6 @@ To run the application in linux environment with 4 lcores, 4 ports, 8 RX queues 
 
 ds的翻译:
 
-# 
-
 ## 16. L2 转发
 
 - **源 MAC 地址** 被替换为 **TX_PORT 的 MAC 地址**
