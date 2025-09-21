@@ -12,7 +12,11 @@
         "snippet_match_ipv4.h": "c",
         "rte_net.h": "c",
         "rte_compat.h": "c",
-        "rte_argparse.h": "c"
+        "rte_argparse.h": "c",
+        "aes.h": "c",
+        "evp.h": "c",
+        "rte_ring.h": "c",
+        "rte_string_fns.h": "c"
     },
     "C_Cpp.default.compileCommands": "/home/ada/pwd-writeup/NetworkLayer/dpdk-lab/builddir/compile_commands.json",
     "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild"

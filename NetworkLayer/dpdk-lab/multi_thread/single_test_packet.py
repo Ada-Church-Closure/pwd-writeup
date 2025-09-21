@@ -12,6 +12,6 @@ from scapy.all import Ether, sendp
 
 pkt = Ether(dst="02:70:63:61:70:00", src="02:00:00:00:00:02")/b'HELLO-DPDK'
 
-for index in range(1):
+for index in range(10):
     sendp(pkt, iface="veth0", count=1, verbose=1)
 
