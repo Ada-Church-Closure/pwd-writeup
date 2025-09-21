@@ -428,15 +428,15 @@ l2fwd_main_loop(void)
 
 			port_statistics[portid].rx += nb_rx;
 			// printf("Port ID: %d		rx: %d\n",portid, port_statistics[portid].rx);
-			if (!end_flag && port_statistics[portid].tx >= 300000)
+			if (!end_flag && port_statistics[portid].tx >= 5000000)
 			{
 				end_flag = true;
 				end_cycles = rte_get_timer_cycles();
 				uint64_t hz = rte_get_timer_hz();
 				double seconds = (double)(end_cycles - mid_cycles) / hz;
 				// 转发1000个包,结束记录时间
-				printf("Forwarded 300000 frames in %.5f seconds\n", seconds);
-				printf("The speed is %.5f frame/s... \n", (double)(300000 / seconds));
+				printf("Forwarded 5000000 frames in %.5f seconds\n", seconds);
+				printf("The speed is %.5f frame/s... \n", (double)(5000000 / seconds));
 			}
 
 			for (j = 0; j < nb_rx; j++)
