@@ -212,6 +212,30 @@ Logical Core 3 (socket 0) forwards packets on 1 streams:
 
 以5000000个数据包做基准,虽然我不知道会不会有性能的限制.
 
+#### 64bytes:
+
+A:
+
+```sh
+Forwarded 5000000 frames in 11.95635 seconds
+The speed is 418187.79948 frame/s... 
+```
+
+B:
+
+```sh
+Forwarded 5000000 frames in 8.39710 seconds
+The speed is 595443.45456 frame/s... 
+```
+
+C:
+
+```sh
+
+```
+
+
+
 #### 128bytes:
 
 A:
