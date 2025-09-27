@@ -13,6 +13,7 @@
 #include <getopt.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include <rte_common.h>
 #include <rte_log.h>
@@ -46,24 +47,60 @@
 static const unsigned char aes_key[16] = "0123456789abcdef"; // 128-bit key
 static const unsigned char aes_iv[16] = "abcdef9876543210";  // 初始向量
 
+// 每个加密线程的本地上下文（避免频繁创建/销毁）
+// 本地线程的做法,避免了数据竞争和锁开销
+static __thread EVP_CIPHER_CTX *encrypt_ctx = NULL;
+static __thread EVP_CIPHER_CTX *decrypt_ctx = NULL;
+
+// 初始化加密上下文
+// 初始化加密上下文
+static void init_crypto_contexts(void)
+{
+    // ---- 初始化加密上下文 ----
+    if (encrypt_ctx == NULL)
+    {
+        encrypt_ctx = EVP_CIPHER_CTX_new();
+        if (encrypt_ctx == NULL)
+            rte_exit(EXIT_FAILURE, "Cannot create encrypt context\n");
+        
+        // 在这里进行一次性初始化，设置模式、密钥和IV
+        // 这会执行密钥扩展 (key scheduling)
+        if (1 != EVP_EncryptInit_ex(encrypt_ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv))
+            rte_exit(EXIT_FAILURE, "Cannot init encrypt context\n");
+    }
+
+    // ---- 初始化解密上下文 ----
+    if (decrypt_ctx == NULL)
+    {
+        decrypt_ctx = EVP_CIPHER_CTX_new();
+        if (decrypt_ctx == NULL)
+            rte_exit(EXIT_FAILURE, "Cannot create decrypt context\n");
+
+        // 在这里进行一次性初始化
+        if (1 != EVP_DecryptInit_ex(decrypt_ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv))
+            rte_exit(EXIT_FAILURE, "Cannot init decrypt context\n");
+    }
+}
+
+
 // ----------------- AES 加密 -----------------
 void real_encrypt(struct rte_mbuf *m)
 {
-    // printf("Encrypted...\n");
+    // printf("Encypted\n");
     struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-    uint8_t *payload = (uint8_t *)(eth + 1); // 以太头后面的数据
+    uint8_t *payload = (uint8_t *)(eth + 1);
     int payload_len = rte_pktmbuf_data_len(m) - sizeof(struct rte_ether_hdr);
 
-    // EVP 上下文
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     int out_len1 = 0, out_len2 = 0;
-
-    // 输出缓冲区（最多比原数据多一个 block）
     uint8_t outbuf[payload_len + EVP_MAX_BLOCK_LENGTH];
 
-    EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv);
-    EVP_EncryptUpdate(ctx, outbuf, &out_len1, payload, payload_len);
-    EVP_EncryptFinal_ex(ctx, outbuf + out_len1, &out_len2);
+    // 重置上下文，使其恢复到 Init 后的状态（主要是重置IV）
+    // 不再需要调用 EVP_EncryptInit_ex
+    if (1 != EVP_CIPHER_CTX_reset(encrypt_ctx))
+        rte_exit(EXIT_FAILURE, "Cannot reset encrypt context\n");
+
+    EVP_EncryptUpdate(encrypt_ctx, outbuf, &out_len1, payload, payload_len);
+    EVP_EncryptFinal_ex(encrypt_ctx, outbuf + out_len1, &out_len2);
 
     int total_len = out_len1 + out_len2;
 
@@ -72,28 +109,28 @@ void real_encrypt(struct rte_mbuf *m)
     rte_pktmbuf_pkt_len(m) = sizeof(struct rte_ether_hdr) + total_len;
     rte_pktmbuf_data_len(m) = rte_pktmbuf_pkt_len(m);
 
-    // 修改 EtherType → 标记“已加密”
+    // 修改 EtherType → 标记"已加密"
     eth->ether_type = rte_cpu_to_be_16(MARK_ETHER_TYPE);
-
-    EVP_CIPHER_CTX_free(ctx);
 }
 
 // ----------------- AES 解密 -----------------
 void real_decrypt(struct rte_mbuf *m)
 {
-    // printf("Decryped\n");
+    // printf("Decrypted\n");
     struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
     uint8_t *payload = (uint8_t *)(eth + 1);
     int payload_len = rte_pktmbuf_data_len(m) - sizeof(struct rte_ether_hdr);
 
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     int out_len1 = 0, out_len2 = 0;
-
     uint8_t outbuf[payload_len + EVP_MAX_BLOCK_LENGTH];
 
-    EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv);
-    EVP_DecryptUpdate(ctx, outbuf, &out_len1, payload, payload_len);
-    EVP_DecryptFinal_ex(ctx, outbuf + out_len1, &out_len2);
+    // 重置上下文，使其恢复到 Init 后的状态
+    // 不再需要调用 EVP_DecryptInit_ex
+    if (1 != EVP_CIPHER_CTX_reset(decrypt_ctx))
+        rte_exit(EXIT_FAILURE, "Cannot reset decrypt context\n");
+
+    EVP_DecryptUpdate(decrypt_ctx, outbuf, &out_len1, payload, payload_len);
+    EVP_DecryptFinal_ex(decrypt_ctx, outbuf + out_len1, &out_len2);
 
     int total_len = out_len1 + out_len2;
 
@@ -104,8 +141,6 @@ void real_decrypt(struct rte_mbuf *m)
 
     // 还原 EtherType（比如 IPv4）
     eth->ether_type = rte_cpu_to_be_16(0x0800);
-
-    EVP_CIPHER_CTX_free(ctx);
 }
 
 static volatile bool force_quit;
@@ -183,7 +218,7 @@ struct rte_mempool *l2fwd_pktmbuf_pool = NULL;
 
 // 做ring的参数的一些描述
 /* rings for pipeline */
-#define RING_SIZE 8192
+#define RING_SIZE 65536 // 增加到64K，提供更大缓冲区
 static struct rte_ring *rx_to_crypto = NULL;
 static struct rte_ring *crypto_to_tx = NULL;
 
@@ -241,6 +276,22 @@ print_stats(void)
         total_packets_tx += port_statistics[portid].tx;
         total_packets_rx += port_statistics[portid].rx;
     }
+
+    /* 添加 Ring 状态调试信息 */
+    if (rx_to_crypto && crypto_to_tx)
+    {
+        unsigned rx_ring_count = rte_ring_count(rx_to_crypto);
+        unsigned tx_ring_count = rte_ring_count(crypto_to_tx);
+        unsigned rx_ring_free = rte_ring_free_count(rx_to_crypto);
+        unsigned tx_ring_free = rte_ring_free_count(crypto_to_tx);
+
+        printf("\nRing statistics ====================================="
+               "\nRX->Crypto ring: %u/%u (used/total), %u free"
+               "\nCrypto->TX ring: %u/%u (used/total), %u free",
+               rx_ring_count, RING_SIZE, rx_ring_free,
+               tx_ring_count, RING_SIZE, tx_ring_free);
+    }
+
     printf("\nAggregate statistics ==============================="
            "\nTotal packets sent: %18" PRIu64
            "\nTotal packets received: %14" PRIu64
@@ -249,14 +300,6 @@ print_stats(void)
            total_packets_rx,
            total_packets_dropped);
     printf("\n====================================================\n");
-    // if(total_packets_rx > 2000){
-    // 	end_cycles = rte_get_timer_cycles();
-    // 	uint64_t hz = rte_get_timer_hz();
-    // 	double seconds = (double)(end_cycles - start_cycles) / hz;
-
-    // 	printf("Forwarded 1000 frames in %.5f seconds\n", seconds);
-    // 	printf("The speed is %.5f frames/s... \n", (double)(1000 / seconds));
-    // }
     fflush(stdout);
 }
 
@@ -283,6 +326,10 @@ crypto_loop(__rte_unused void *arg)
 {
     struct rte_mbuf *pkts[RTE_RING_BURST];
     unsigned nb, i;
+    unsigned idle_count = 0;
+
+    // 初始化线程本地加密上下文
+    init_crypto_contexts();
 
     while (!force_quit)
     {
@@ -291,38 +338,60 @@ crypto_loop(__rte_unused void *arg)
                                     RTE_RING_BURST, NULL);
         if (nb == 0)
         {
-            /* 如果没有包，短暂让出 CPU 避免 busy-wait 太重（也可以用 pause/yield） */
-            rte_pause();
+            idle_count++;
+            if (idle_count > 100)
+            {
+                /* 长时间空闲时短暂休眠，减少CPU占用 */
+                rte_delay_us(1);
+                idle_count = 0;
+            }
+            else
+            {
+                rte_pause();
+            }
             continue;
         }
+        idle_count = 0;
 
         for (i = 0; i < nb; i++)
         {
             struct rte_mbuf *m = pkts[i];
-
             struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+
             if (rte_be_to_cpu_16(eth->ether_type) == MARK_ETHER_TYPE)
             {
+                /* 解密数据包，然后释放（避免循环转发） */
                 real_decrypt(m);
                 rte_pktmbuf_free(m);
-                continue;
             }
-
-            real_encrypt(m);
-
-            eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-            eth->ether_type = rte_cpu_to_be_16(MARK_ETHER_TYPE);
-
-            uint16_t src = m->port;
-            uint16_t dst = l2fwd_dst_ports[src];
-            m->port = dst;
-
-            /* 将加密后的包放到 crypto_to_tx，等 I/O 线程发送 */
-            if (rte_ring_enqueue(crypto_to_tx, m) < 0)
+            else
             {
-                rte_pktmbuf_free(m);
+                /* 加密数据包并转发 */
+                real_encrypt(m); // 内部已设置 MARK_ETHER_TYPE
+
+                uint16_t src = m->port;
+                uint16_t dst = l2fwd_dst_ports[src];
+                m->port = dst;
+
+                /* 将加密后的包放到 crypto_to_tx，等 I/O 线程发送 */
+                if (rte_ring_enqueue(crypto_to_tx, m) < 0)
+                {
+                    rte_pktmbuf_free(m);
+                }
             }
         }
+    }
+
+    /* 清理线程本地上下文 */
+    if (encrypt_ctx)
+    {
+        EVP_CIPHER_CTX_free(encrypt_ctx);
+        encrypt_ctx = NULL;
+    }
+    if (decrypt_ctx)
+    {
+        EVP_CIPHER_CTX_free(decrypt_ctx);
+        decrypt_ctx = NULL;
     }
 
     return 0;
@@ -363,6 +432,7 @@ l2fwd_main_loop(void)
 
         portid = qconf->rx_port_list[i];
         RTE_LOG(INFO, L2FWD, " -- lcoreid=%u portid=%u\n", lcore_id,
+            
                 portid);
     }
 
@@ -442,11 +512,11 @@ l2fwd_main_loop(void)
                 end_cycles = rte_get_timer_cycles();
                 uint64_t hz = rte_get_timer_hz();
 
-                
                 double seconds = (double)(end_cycles - mid_cycles) / hz;
                 // 转发100000个包,结束记录时间
                 printf("Forwarded 5000000 frames in %.5f seconds\n", seconds);
                 printf("The speed is %.5f frame/s... \n", (double)(5000000 / seconds));
+                // force_quit = true;
             }
 
             for (int j = 0; j < nb_rx; ++j)
@@ -462,26 +532,43 @@ l2fwd_main_loop(void)
                 for (j = enqueued; j < nb_rx; j++)
                     rte_pktmbuf_free(pkts_burst[j]);
             }
+        }
 
-            /* 再从 crypto_to_tx 取回已处理包并发送（批处理提高效率） */
-            // 处理好的包怎么取回来
-            struct rte_mbuf *tx_pkts[RTE_RING_BURST];
-            unsigned nb_to_send = rte_ring_dequeue_burst(crypto_to_tx, (void **)tx_pkts, RTE_RING_BURST, NULL);
-            if (nb_to_send > 0)
+        /* 独立的发送逻辑：从 crypto_to_tx 取回已处理包并批量发送 */
+        struct rte_mbuf *tx_pkts[RTE_RING_BURST];
+        unsigned nb_to_send = rte_ring_dequeue_burst(crypto_to_tx, (void **)tx_pkts, RTE_RING_BURST, NULL);
+        if (nb_to_send > 0)
+        {
+            /* 按目标端口分组批量发送（更高效） */
+            struct rte_mbuf *port_pkts[RTE_MAX_ETHPORTS][RTE_RING_BURST];
+            unsigned port_counts[RTE_MAX_ETHPORTS] = {0};
+
+            /* 按端口分组 */
+            for (unsigned k = 0; k < nb_to_send; k++)
             {
-                /* 简单实现：逐包发送（可靠但慢） */
-                for (unsigned k = 0; k < nb_to_send; k++)
+                uint16_t dst = tx_pkts[k]->port;
+                if (dst < RTE_MAX_ETHPORTS && port_counts[dst] < RTE_RING_BURST)
                 {
-                    uint16_t dst = tx_pkts[k]->port; /* 在 crypto_loop 设置为 dst port */
-                    int sent = rte_eth_tx_burst(dst, 0, &tx_pkts[k], 1);
-                    if (sent == 0)
+                    port_pkts[dst][port_counts[dst]++] = tx_pkts[k];
+                }
+                else
+                {
+                    rte_pktmbuf_free(tx_pkts[k]);
+                }
+            }
+
+            /* 批量发送每个端口的包 */
+            for (uint16_t dst = 0; dst < RTE_MAX_ETHPORTS; dst++)
+            {
+                if (port_counts[dst] > 0)
+                {
+                    unsigned sent = rte_eth_tx_burst(dst, 0, port_pkts[dst], port_counts[dst]);
+                    port_statistics[dst].tx += sent;
+
+                    /* 释放未发送成功的包 */
+                    for (unsigned k = sent; k < port_counts[dst]; k++)
                     {
-                        /* 发送失败，释放 */
-                        rte_pktmbuf_free(tx_pkts[k]);
-                    }
-                    else
-                    {
-                        port_statistics[dst].tx += sent;
+                        rte_pktmbuf_free(port_pkts[dst][k]);
                     }
                 }
             }
@@ -1158,16 +1245,16 @@ int main(int argc, char **argv)
 
     /*----------lcore启动流程------------*/
 
-    /* ring 创建：改为 MP/MC（flags = 0）更通用，先用通用版确保正确 */
+    /* ring 创建：使用 MP/MC 支持多个生产者和消费者（更通用） */
     rx_to_crypto = rte_ring_create("RX_TO_CRYPTO", RING_SIZE,
-                                   rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
+                                   rte_socket_id(), 0);
     if (rx_to_crypto == NULL)
         rte_exit(EXIT_FAILURE, "Cannot create rx_to_crypto ring\n");
     else
         printf("Create rx_to_crypto successfully!\n");
 
     crypto_to_tx = rte_ring_create("CRYPTO_TO_TX", RING_SIZE,
-                                   rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
+                                   rte_socket_id(), 0);
     if (crypto_to_tx == NULL)
         rte_exit(EXIT_FAILURE, "Cannot create crypto_to_tx ring\n");
     else
@@ -1276,6 +1363,8 @@ int main(int argc, char **argv)
     /* clean up the EAL */
     rte_eal_cleanup();
     printf("Bye...\n");
+
+    sleep(5);
 
     return ret;
 }
