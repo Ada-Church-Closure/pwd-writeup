@@ -48,66 +48,96 @@
 static const unsigned char aes_key[16] = "0123456789abcdef"; // 128-bit key
 static const unsigned char aes_iv[16] = "abcdef9876543210";	 // 初始向量
 
+static __thread EVP_CIPHER_CTX *encrypt_ctx = NULL;
+static __thread EVP_CIPHER_CTX *decrypt_ctx = NULL;
+
+static void init_crypto_contexts(void)
+{
+    // ---- 初始化加密上下文 ----
+    if (encrypt_ctx == NULL)
+    {
+        encrypt_ctx = EVP_CIPHER_CTX_new();
+        if (encrypt_ctx == NULL)
+            rte_exit(EXIT_FAILURE, "Cannot create encrypt context\n");
+        
+        // 在这里进行一次性初始化，设置模式、密钥和IV
+        // 这会执行密钥扩展 (key scheduling)
+        if (1 != EVP_EncryptInit_ex(encrypt_ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv))
+            rte_exit(EXIT_FAILURE, "Cannot init encrypt context\n");
+    }
+
+    // ---- 初始化解密上下文 ----
+    if (decrypt_ctx == NULL)
+    {
+        decrypt_ctx = EVP_CIPHER_CTX_new();
+        if (decrypt_ctx == NULL)
+            rte_exit(EXIT_FAILURE, "Cannot create decrypt context\n");
+
+        // 在这里进行一次性初始化
+        if (1 != EVP_DecryptInit_ex(decrypt_ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv))
+            rte_exit(EXIT_FAILURE, "Cannot init decrypt context\n");
+    }
+}
+
 // ----------------- AES 加密 -----------------
 void real_encrypt(struct rte_mbuf *m)
 {
-	// printf("Encrypted...\n");
-	struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-	uint8_t *payload = (uint8_t *)(eth + 1); // 以太头后面的数据
-	int payload_len = rte_pktmbuf_data_len(m) - sizeof(struct rte_ether_hdr);
+    // printf("Encypted\n");
+    struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    uint8_t *payload = (uint8_t *)(eth + 1);
+    int payload_len = rte_pktmbuf_data_len(m) - sizeof(struct rte_ether_hdr);
 
-	// EVP 上下文
-	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-	int out_len1 = 0, out_len2 = 0;
+    int out_len1 = 0, out_len2 = 0;
+    uint8_t outbuf[payload_len + EVP_MAX_BLOCK_LENGTH];
 
-	// 输出缓冲区（最多比原数据多一个 block）
-	uint8_t outbuf[payload_len + EVP_MAX_BLOCK_LENGTH];
+    // 重置上下文，使其恢复到 Init 后的状态（主要是重置IV）
+    // 不再需要调用 EVP_EncryptInit_ex
+    if (1 != EVP_CIPHER_CTX_reset(encrypt_ctx))
+        rte_exit(EXIT_FAILURE, "Cannot reset encrypt context\n");
 
-	EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv);
-	EVP_EncryptUpdate(ctx, outbuf, &out_len1, payload, payload_len);
-	EVP_EncryptFinal_ex(ctx, outbuf + out_len1, &out_len2);
+    EVP_EncryptUpdate(encrypt_ctx, outbuf, &out_len1, payload, payload_len);
+    EVP_EncryptFinal_ex(encrypt_ctx, outbuf + out_len1, &out_len2);
 
-	int total_len = out_len1 + out_len2;
+    int total_len = out_len1 + out_len2;
 
-	// 把加密后的内容写回 mbuf
-	rte_memcpy(payload, outbuf, total_len);
-	rte_pktmbuf_pkt_len(m) = sizeof(struct rte_ether_hdr) + total_len;
-	rte_pktmbuf_data_len(m) = rte_pktmbuf_pkt_len(m);
+    // 把加密后的内容写回 mbuf
+    rte_memcpy(payload, outbuf, total_len);
+    rte_pktmbuf_pkt_len(m) = sizeof(struct rte_ether_hdr) + total_len;
+    rte_pktmbuf_data_len(m) = rte_pktmbuf_pkt_len(m);
 
-	// 修改 EtherType → 标记“已加密”
-	eth->ether_type = rte_cpu_to_be_16(MARK_ETHER_TYPE);
-
-	EVP_CIPHER_CTX_free(ctx);
+    // 修改 EtherType → 标记"已加密"
+    eth->ether_type = rte_cpu_to_be_16(MARK_ETHER_TYPE);
 }
 
-// ----------------- AES 解密 -----------------
+
+
 void real_decrypt(struct rte_mbuf *m)
 {
-	// printf("Decryped\n");
-	struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
-	uint8_t *payload = (uint8_t *)(eth + 1);
-	int payload_len = rte_pktmbuf_data_len(m) - sizeof(struct rte_ether_hdr);
+    // printf("Decrypted\n");
+    struct rte_ether_hdr *eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
+    uint8_t *payload = (uint8_t *)(eth + 1);
+    int payload_len = rte_pktmbuf_data_len(m) - sizeof(struct rte_ether_hdr);
 
-	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-	int out_len1 = 0, out_len2 = 0;
+    int out_len1 = 0, out_len2 = 0;
+    uint8_t outbuf[payload_len + EVP_MAX_BLOCK_LENGTH];
 
-	uint8_t outbuf[payload_len + EVP_MAX_BLOCK_LENGTH];
+    // 重置上下文，使其恢复到 Init 后的状态
+    // 不再需要调用 EVP_DecryptInit_ex
+    if (1 != EVP_CIPHER_CTX_reset(decrypt_ctx))
+        rte_exit(EXIT_FAILURE, "Cannot reset decrypt context\n");
 
-	EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, aes_key, aes_iv);
-	EVP_DecryptUpdate(ctx, outbuf, &out_len1, payload, payload_len);
-	EVP_DecryptFinal_ex(ctx, outbuf + out_len1, &out_len2);
+    EVP_DecryptUpdate(decrypt_ctx, outbuf, &out_len1, payload, payload_len);
+    EVP_DecryptFinal_ex(decrypt_ctx, outbuf + out_len1, &out_len2);
 
-	int total_len = out_len1 + out_len2;
+    int total_len = out_len1 + out_len2;
 
-	// 解密结果写回 payload
-	rte_memcpy(payload, outbuf, total_len);
-	rte_pktmbuf_pkt_len(m) = sizeof(struct rte_ether_hdr) + total_len;
-	rte_pktmbuf_data_len(m) = rte_pktmbuf_pkt_len(m);
+    // 解密结果写回 payload
+    rte_memcpy(payload, outbuf, total_len);
+    rte_pktmbuf_pkt_len(m) = sizeof(struct rte_ether_hdr) + total_len;
+    rte_pktmbuf_data_len(m) = rte_pktmbuf_pkt_len(m);
 
-	// 还原 EtherType（比如 IPv4）
-	eth->ether_type = rte_cpu_to_be_16(0x0800);
-
-	EVP_CIPHER_CTX_free(ctx);
+    // 还原 EtherType（比如 IPv4）
+    eth->ether_type = rte_cpu_to_be_16(0x0800);
 }
 
 static volatile bool force_quit;
@@ -319,6 +349,7 @@ l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
 static void
 l2fwd_main_loop(void)
 {
+	init_crypto_contexts();
 	struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
 	struct rte_mbuf *m;
 	int sent;
@@ -335,7 +366,7 @@ l2fwd_main_loop(void)
 
 	lcore_id = rte_lcore_id();
 	qconf = &lcore_queue_conf[lcore_id];
-
+	
 	if (qconf->n_rx_port == 0)
 	{
 		RTE_LOG(INFO, L2FWD, "lcore %u has nothing to do\n", lcore_id);
@@ -428,15 +459,20 @@ l2fwd_main_loop(void)
 
 			port_statistics[portid].rx += nb_rx;
 			// printf("Port ID: %d		rx: %d\n",portid, port_statistics[portid].rx);
+
+			// 修复: 统一使用tx计数,确保测量的是真实转发的包
 			if (!end_flag && port_statistics[portid].tx >= 5000000)
 			{
 				end_flag = true;
 				end_cycles = rte_get_timer_cycles();
 				uint64_t hz = rte_get_timer_hz();
 				double seconds = (double)(end_cycles - mid_cycles) / hz;
-				// 转发1000个包,结束记录时间
-				printf("Forwarded 5000000 frames in %.5f seconds\n", seconds);
-				printf("The speed is %.5f frame/s... \n", (double)(5000000 / seconds));
+				printf("\n========== 单线程性能测试结果 ==========\n");
+				printf("转发包数: 5000000 frames\n");
+				printf("耗时: %.5f seconds\n", seconds);
+				printf("吞吐量: %.2f frames/s (%.2f Kpps)\n",
+					(double)(5000000 / seconds), (double)(5000000 / seconds / 1000));
+				printf("==========================================\n\n");
 			}
 
 			for (j = 0; j < nb_rx; j++)

@@ -234,6 +234,17 @@ struct __rte_cache_aligned l2fwd_port_statistics
 };
 struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 
+/* 添加ring队列丢包统计 */
+static uint64_t ring_rx_to_crypto_dropped = 0;
+static uint64_t ring_crypto_to_tx_dropped = 0;
+
+/* 添加加解密计数统计 */
+static uint64_t crypto_encrypted_count = 0;
+static uint64_t crypto_decrypted_count = 0;
+
+/* 验证: 统计发送的包中有多少是加密标记的 */
+static uint64_t tx_encrypted_marked_count = 0;
+
 #define MAX_TIMER_PERIOD 86400 /* 1 day max */
 /* A tsc-based timer responsible for triggering statistics printout */
 static uint64_t timer_period = 10; /* default period is 10 seconds */
@@ -287,9 +298,22 @@ print_stats(void)
 
         printf("\nRing statistics ====================================="
                "\nRX->Crypto ring: %u/%u (used/total), %u free"
-               "\nCrypto->TX ring: %u/%u (used/total), %u free",
+               "\nCrypto->TX ring: %u/%u (used/total), %u free"
+               "\nRX->Crypto dropped: %" PRIu64
+               "\nCrypto->TX dropped: %" PRIu64
+               "\n\nCrypto statistics ==================================="
+               "\nPackets encrypted: %" PRIu64
+               "\nPackets decrypted: %" PRIu64
+               "\n\nVerification statistics ============================="
+               "\nTX packets with encrypted mark: %" PRIu64
+               "\n  (Should match encrypted count if working correctly)",
                rx_ring_count, RING_SIZE, rx_ring_free,
-               tx_ring_count, RING_SIZE, tx_ring_free);
+               tx_ring_count, RING_SIZE, tx_ring_free,
+               ring_rx_to_crypto_dropped,
+               ring_crypto_to_tx_dropped,
+               crypto_encrypted_count,
+               crypto_decrypted_count,
+               tx_encrypted_marked_count);
     }
 
     printf("\nAggregate statistics ==============================="
@@ -325,8 +349,10 @@ static int
 crypto_loop(__rte_unused void *arg)
 {
     struct rte_mbuf *pkts[RTE_RING_BURST];
+    struct rte_mbuf *encrypted_pkts[RTE_RING_BURST];
     unsigned nb, i;
     unsigned idle_count = 0;
+    unsigned encrypted_count;
 
     // 初始化线程本地加密上下文
     init_crypto_contexts();
@@ -353,6 +379,8 @@ crypto_loop(__rte_unused void *arg)
         }
         idle_count = 0;
 
+        encrypted_count = 0;
+
         for (i = 0; i < nb; i++)
         {
             struct rte_mbuf *m = pkts[i];
@@ -362,21 +390,37 @@ crypto_loop(__rte_unused void *arg)
             {
                 /* 解密数据包，然后释放（避免循环转发） */
                 real_decrypt(m);
+                crypto_decrypted_count++;  // 统计解密包数
                 rte_pktmbuf_free(m);
             }
             else
             {
                 /* 加密数据包并转发 */
                 real_encrypt(m); // 内部已设置 MARK_ETHER_TYPE
+                crypto_encrypted_count++;  // 统计加密包数
 
                 uint16_t src = m->port;
                 uint16_t dst = l2fwd_dst_ports[src];
                 m->port = dst;
 
-                /* 将加密后的包放到 crypto_to_tx，等 I/O 线程发送 */
-                if (rte_ring_enqueue(crypto_to_tx, m) < 0)
+                /* 收集加密后的包，稍后批量入队 */
+                encrypted_pkts[encrypted_count++] = m;
+            }
+        }
+
+        /* 批量将加密后的包入队到 crypto_to_tx */
+        if (encrypted_count > 0)
+        {
+            unsigned enqueued = rte_ring_enqueue_burst(crypto_to_tx,
+                                (void **)encrypted_pkts, encrypted_count, NULL);
+
+            /* 释放未能入队的包并统计丢包 */
+            if (unlikely(enqueued < encrypted_count))
+            {
+                ring_crypto_to_tx_dropped += (encrypted_count - enqueued);
+                for (i = enqueued; i < encrypted_count; i++)
                 {
-                    rte_pktmbuf_free(m);
+                    rte_pktmbuf_free(encrypted_pkts[i]);
                 }
             }
         }
@@ -506,18 +550,9 @@ l2fwd_main_loop(void)
             }
 
             port_statistics[portid].rx += nb_rx;
-            if (!end_flag && port_statistics[portid].rx >= 10000000)
-            {
-                end_flag = true;
-                end_cycles = rte_get_timer_cycles();
-                uint64_t hz = rte_get_timer_hz();
 
-                double seconds = (double)(end_cycles - mid_cycles) / hz;
-                // 转发100000个包,结束记录时间
-                printf("Forwarded 5000000 frames in %.5f seconds\n", seconds);
-                printf("The speed is %.5f frame/s... \n", (double)(5000000 / seconds));
-                // force_quit = true;
-            }
+            // ⚠️ 注意: 这里不能用 rx 判断结束,因为包还没真正处理完!
+            // 需要在发送端(tx)判断才准确
 
             for (int j = 0; j < nb_rx; ++j)
             {
@@ -528,7 +563,8 @@ l2fwd_main_loop(void)
             unsigned enqueued = rte_ring_enqueue_burst(rx_to_crypto, (void **)pkts_burst, nb_rx, NULL);
             if (enqueued < nb_rx)
             {
-                /* 未能全部入队，释放未入队的 mbuf */
+                /* 未能全部入队，释放未入队的 mbuf 并统计丢包 */
+                ring_rx_to_crypto_dropped += (nb_rx - enqueued);
                 for (j = enqueued; j < nb_rx; j++)
                     rte_pktmbuf_free(pkts_burst[j]);
             }
@@ -562,8 +598,33 @@ l2fwd_main_loop(void)
             {
                 if (port_counts[dst] > 0)
                 {
+                    // 验证: 检查发送的包是否有加密标记
+                    for (unsigned k = 0; k < port_counts[dst]; k++)
+                    {
+                        struct rte_ether_hdr *eth = rte_pktmbuf_mtod(port_pkts[dst][k], struct rte_ether_hdr *);
+                        if (rte_be_to_cpu_16(eth->ether_type) == MARK_ETHER_TYPE)
+                        {
+                            tx_encrypted_marked_count++;
+                        }
+                    }
+
                     unsigned sent = rte_eth_tx_burst(dst, 0, port_pkts[dst], port_counts[dst]);
                     port_statistics[dst].tx += sent;
+
+                    // 修复: 在这里判断结束条件,因为这里才是真正发送出去的包!
+                    if (!end_flag && port_statistics[dst].tx >= 5000000)
+                    {
+                        end_flag = true;
+                        end_cycles = rte_get_timer_cycles();
+                        uint64_t hz = rte_get_timer_hz();
+                        double seconds = (double)(end_cycles - mid_cycles) / hz;
+                        printf("\n========== 多线程性能测试结果 ==========\n");
+                        printf("转发包数: 5000000 frames\n");
+                        printf("耗时: %.5f seconds\n", seconds);
+                        printf("吞吐量: %.2f frames/s (%.2f Kpps)\n",
+                            (double)(5000000 / seconds), (double)(5000000 / seconds / 1000));
+                        printf("==========================================\n\n");
+                    }
 
                     /* 释放未发送成功的包 */
                     for (unsigned k = sent; k < port_counts[dst]; k++)
