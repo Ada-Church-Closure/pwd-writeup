@@ -1321,61 +1321,71 @@ int main(int argc, char **argv)
     else
         printf("Create crypto_to_tx successfully!\n");
 
-    /* 选择一个 crypto lcore：优先选择已 enable 且没有被分配 RX 的 lcore */
-    unsigned crypto_lcore = RTE_MAX_LCORE;
+    /* 选择所有可用的 crypto lcore：优先选择已 enable 且没有被分配 RX 的 lcore */
+    unsigned crypto_lcores[RTE_MAX_LCORE];
+    unsigned nb_crypto_lcores = 0;
     unsigned l;
+
+    /* 遍历所有启用的lcore,找出没有被分配RX任务的作为crypto worker */
     for (l = rte_get_next_lcore(rte_get_main_lcore(), 1, 0);
          l != RTE_MAX_LCORE;
          l = rte_get_next_lcore(l, 1, 0))
     {
         if (lcore_queue_conf[l].n_rx_port == 0)
         {
-            crypto_lcore = l;
-            break;
+            crypto_lcores[nb_crypto_lcores++] = l;
         }
     }
 
-    /* 如果没有找到空闲且未分配 RX 的 lcore，则尝试找任意已启用的 worker（退而求其次）*/
-    if (crypto_lcore == RTE_MAX_LCORE)
+    if (nb_crypto_lcores == 0)
     {
-        for (l = rte_get_next_lcore(rte_get_main_lcore(), 1, 0);
-             l != RTE_MAX_LCORE;
-             l = rte_get_next_lcore(l, 1, 0))
-        {
-            crypto_lcore = l;
-            break;
-        }
-    }
-
-    if (crypto_lcore == RTE_MAX_LCORE)
-    {
-        printf("No available lcore for crypto\n");
+        printf("WARNING: No available lcore for crypto workers!\n");
+        printf("Please use more lcores (e.g., -l 0-3 for 4 cores)\n");
     }
     else
     {
-        int r = rte_eal_remote_launch(crypto_loop, NULL, crypto_lcore);
-        if (r != 0)
+        printf("\n========== Crypto Worker Configuration ==========\n");
+        printf("Launching %u crypto worker(s)\n", nb_crypto_lcores);
+
+        /* 启动所有crypto workers */
+        for (unsigned i = 0; i < nb_crypto_lcores; i++)
         {
-            printf("Failed to launch crypto on lcore %u: %d\n", crypto_lcore, r);
-            /* 可根据需要 exit 或继续 */
+            int r = rte_eal_remote_launch(crypto_loop, NULL, crypto_lcores[i]);
+            if (r != 0)
+            {
+                printf("  Failed to launch crypto on lcore %u: %d\n", crypto_lcores[i], r);
+            }
+            else
+            {
+                printf("  Crypto worker #%u launched on lcore %u\n", i+1, crypto_lcores[i]);
+            }
         }
-        else
-        {
-            printf("Crypto loop launched on lcore %u\n", crypto_lcore);
-        }
+        printf("==================================================\n\n");
     }
 
-    /* 启动其它有 RX 的 lcore 来做 l2fwd（跳过 crypto_lcore） */
+    /* 启动其它有 RX 的 lcore 来做 l2fwd（跳过所有 crypto workers） */
     /* 对 worker（非 main）使用 remote_launch；对 main 直接调用（如果 main 被分配 RX） */
     unsigned main_core = rte_get_main_lcore();
     for (l = rte_get_next_lcore(rte_get_main_lcore(), 1, 0);
          l != RTE_MAX_LCORE;
          l = rte_get_next_lcore(l, 1, 0))
     {
-        if (l == crypto_lcore)
+        /* 跳过所有crypto workers */
+        bool is_crypto_worker = false;
+        for (unsigned i = 0; i < nb_crypto_lcores; i++)
+        {
+            if (l == crypto_lcores[i])
+            {
+                is_crypto_worker = true;
+                break;
+            }
+        }
+        if (is_crypto_worker)
             continue;
+
         if (lcore_queue_conf[l].n_rx_port == 0)
             continue; /* 该 lcore 没有 RX 任务，不启动 l2fwd */
+
         int r = rte_eal_remote_launch(l2fwd_launch_one_lcore, NULL, l);
         if (r != 0)
         {
@@ -1388,7 +1398,18 @@ int main(int argc, char **argv)
     }
 
     /* 如果 main core 被分配 RX（即有 qconf），就在 main 线程上运行 l2fwd（同步、阻塞） */
-    if (main_core != crypto_lcore && lcore_queue_conf[main_core].n_rx_port > 0)
+    /* 先检查main core是否是crypto worker */
+    bool main_is_crypto = false;
+    for (unsigned i = 0; i < nb_crypto_lcores; i++)
+    {
+        if (main_core == crypto_lcores[i])
+        {
+            main_is_crypto = true;
+            break;
+        }
+    }
+
+    if (!main_is_crypto && lcore_queue_conf[main_core].n_rx_port > 0)
     {
         printf("Running l2fwd on main core %u (this will block until exit)\n", main_core);
         l2fwd_launch_one_lcore(NULL); /* 该调用会阻塞直到 force_quit=true 并退出 main loop */

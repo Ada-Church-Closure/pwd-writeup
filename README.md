@@ -6,3 +6,5 @@
 
 - [pwn.college](https://pwn.college/)
 - [pwnable](https://pwnable.kr)
+
+同时我会针对Java-Web的后端开发岗位的技术栈进行研究(单纯因为岗位比较多),会把一些小的项目记录下来.
