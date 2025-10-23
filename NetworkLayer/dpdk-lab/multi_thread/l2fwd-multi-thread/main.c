@@ -219,8 +219,11 @@ struct rte_mempool *l2fwd_pktmbuf_pool = NULL;
 // 做ring的参数的一些描述
 /* rings for pipeline */
 #define RING_SIZE 65536 // 增加到64K，提供更大缓冲区
-static struct rte_ring *rx_to_crypto = NULL;
-static struct rte_ring *crypto_to_tx = NULL;
+#define MAX_CRYPTO_WORKERS 8 // 最多支持8个crypto worker
+
+/* 每个crypto worker有独立的ring队列 */
+static struct rte_ring *rx_to_crypto[MAX_CRYPTO_WORKERS];    // I/O → Crypto
+static struct rte_ring *crypto_to_tx[MAX_CRYPTO_WORKERS];    // Crypto → I/O
 
 /* 设置每次批量处理大小 */
 #define RTE_RING_BURST 32
@@ -234,13 +237,13 @@ struct __rte_cache_aligned l2fwd_port_statistics
 };
 struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 
-/* 添加ring队列丢包统计 */
-static uint64_t ring_rx_to_crypto_dropped = 0;
-static uint64_t ring_crypto_to_tx_dropped = 0;
+/* 添加ring队列丢包统计 - 每个worker独立统计 */
+static uint64_t ring_rx_to_crypto_dropped[MAX_CRYPTO_WORKERS];
+static uint64_t ring_crypto_to_tx_dropped[MAX_CRYPTO_WORKERS];
 
-/* 添加加解密计数统计 */
-static uint64_t crypto_encrypted_count = 0;
-static uint64_t crypto_decrypted_count = 0;
+/* 添加加解密计数统计 - 每个worker独立统计 */
+static uint64_t crypto_encrypted_count[MAX_CRYPTO_WORKERS];
+static uint64_t crypto_decrypted_count[MAX_CRYPTO_WORKERS];
 
 /* 验证: 统计发送的包中有多少是加密标记的 */
 static uint64_t tx_encrypted_marked_count = 0;
@@ -289,32 +292,44 @@ print_stats(void)
     }
 
     /* 添加 Ring 状态调试信息 */
-    if (rx_to_crypto && crypto_to_tx)
-    {
-        unsigned rx_ring_count = rte_ring_count(rx_to_crypto);
-        unsigned tx_ring_count = rte_ring_count(crypto_to_tx);
-        unsigned rx_ring_free = rte_ring_free_count(rx_to_crypto);
-        unsigned tx_ring_free = rte_ring_free_count(crypto_to_tx);
+    printf("\nRing statistics (per worker) =======================");
 
-        printf("\nRing statistics ====================================="
-               "\nRX->Crypto ring: %u/%u (used/total), %u free"
-               "\nCrypto->TX ring: %u/%u (used/total), %u free"
-               "\nRX->Crypto dropped: %" PRIu64
-               "\nCrypto->TX dropped: %" PRIu64
-               "\n\nCrypto statistics ==================================="
-               "\nPackets encrypted: %" PRIu64
-               "\nPackets decrypted: %" PRIu64
-               "\n\nVerification statistics ============================="
-               "\nTX packets with encrypted mark: %" PRIu64
-               "\n  (Should match encrypted count if working correctly)",
-               rx_ring_count, RING_SIZE, rx_ring_free,
-               tx_ring_count, RING_SIZE, tx_ring_free,
-               ring_rx_to_crypto_dropped,
-               ring_crypto_to_tx_dropped,
-               crypto_encrypted_count,
-               crypto_decrypted_count,
-               tx_encrypted_marked_count);
+    uint64_t total_rx_dropped = 0, total_tx_dropped = 0;
+    uint64_t total_encrypted = 0, total_decrypted = 0;
+
+    for (unsigned w = 0; w < MAX_CRYPTO_WORKERS; w++)
+    {
+        if (rx_to_crypto[w] == NULL)
+            break; // 没有更多worker
+
+        unsigned rx_count = rte_ring_count(rx_to_crypto[w]);
+        unsigned tx_count = rte_ring_count(crypto_to_tx[w]);
+
+        printf("\nWorker %u:", w);
+        printf("\n  RX->Crypto: %u/%u used", rx_count, RING_SIZE);
+        printf("\n  Crypto->TX: %u/%u used", tx_count, RING_SIZE);
+        printf("\n  Encrypted: %" PRIu64, crypto_encrypted_count[w]);
+        printf("\n  Decrypted: %" PRIu64, crypto_decrypted_count[w]);
+        printf("\n  Dropped(RX): %" PRIu64, ring_rx_to_crypto_dropped[w]);
+        printf("\n  Dropped(TX): %" PRIu64, ring_crypto_to_tx_dropped[w]);
+
+        total_rx_dropped += ring_rx_to_crypto_dropped[w];
+        total_tx_dropped += ring_crypto_to_tx_dropped[w];
+        total_encrypted += crypto_encrypted_count[w];
+        total_decrypted += crypto_decrypted_count[w];
     }
+
+    printf("\n\nCrypto statistics (total) ==========================="
+           "\nTotal encrypted: %" PRIu64
+           "\nTotal decrypted: %" PRIu64
+           "\nTotal RX dropped: %" PRIu64
+           "\nTotal TX dropped: %" PRIu64
+           "\n\nVerification ===================================="
+           "\nTX encrypted mark: %" PRIu64
+           "\n  (Should match total encrypted)",
+           total_encrypted, total_decrypted,
+           total_rx_dropped, total_tx_dropped,
+           tx_encrypted_marked_count);
 
     printf("\nAggregate statistics ==============================="
            "\nTotal packets sent: %18" PRIu64
@@ -346,21 +361,24 @@ l2fwd_mac_updating(struct rte_mbuf *m, unsigned dest_portid)
 
 // 加解密的lcore的工作逻辑
 static int
-crypto_loop(__rte_unused void *arg)
+crypto_loop(void *arg)
 {
+    unsigned worker_id = (unsigned)(uintptr_t)arg; // 获取worker ID
     struct rte_mbuf *pkts[RTE_RING_BURST];
     struct rte_mbuf *encrypted_pkts[RTE_RING_BURST];
     unsigned nb, i;
     unsigned idle_count = 0;
     unsigned encrypted_count;
 
+    printf("Crypto worker %u started\n", worker_id);
+
     // 初始化线程本地加密上下文
     init_crypto_contexts();
 
     while (!force_quit)
     {
-        /* 从 rx_to_crypto 取包（最多 RTE_RING_BURST 个） */
-        nb = rte_ring_dequeue_burst(rx_to_crypto, (void **)pkts,
+        /* 从专属ring取包 */
+        nb = rte_ring_dequeue_burst(rx_to_crypto[worker_id], (void **)pkts,
                                     RTE_RING_BURST, NULL);
         if (nb == 0)
         {
@@ -390,14 +408,14 @@ crypto_loop(__rte_unused void *arg)
             {
                 /* 解密数据包，然后释放（避免循环转发） */
                 real_decrypt(m);
-                crypto_decrypted_count++;  // 统计解密包数
+                crypto_decrypted_count[worker_id]++;  // 统计解密包数
                 rte_pktmbuf_free(m);
             }
             else
             {
                 /* 加密数据包并转发 */
                 real_encrypt(m); // 内部已设置 MARK_ETHER_TYPE
-                crypto_encrypted_count++;  // 统计加密包数
+                crypto_encrypted_count[worker_id]++;  // 统计加密包数
 
                 uint16_t src = m->port;
                 uint16_t dst = l2fwd_dst_ports[src];
@@ -408,16 +426,16 @@ crypto_loop(__rte_unused void *arg)
             }
         }
 
-        /* 批量将加密后的包入队到 crypto_to_tx */
+        /* 批量将加密后的包入队到专属return ring */
         if (encrypted_count > 0)
         {
-            unsigned enqueued = rte_ring_enqueue_burst(crypto_to_tx,
+            unsigned enqueued = rte_ring_enqueue_burst(crypto_to_tx[worker_id],
                                 (void **)encrypted_pkts, encrypted_count, NULL);
 
             /* 释放未能入队的包并统计丢包 */
             if (unlikely(enqueued < encrypted_count))
             {
-                ring_crypto_to_tx_dropped += (encrypted_count - enqueued);
+                ring_crypto_to_tx_dropped[worker_id] += (encrypted_count - enqueued);
                 for (i = enqueued; i < encrypted_count; i++)
                 {
                     rte_pktmbuf_free(encrypted_pkts[i]);
@@ -1306,20 +1324,30 @@ int main(int argc, char **argv)
 
     /*----------lcore启动流程------------*/
 
-    /* ring 创建：使用 MP/MC 支持多个生产者和消费者（更通用） */
-    rx_to_crypto = rte_ring_create("RX_TO_CRYPTO", RING_SIZE,
-                                   rte_socket_id(), 0);
-    if (rx_to_crypto == NULL)
-        rte_exit(EXIT_FAILURE, "Cannot create rx_to_crypto ring\n");
-    else
-        printf("Create rx_to_crypto successfully!\n");
+    /* ring 创建：为每个crypto worker创建独立的ring队列对 */
+    printf("\n========== Creating Ring Queues ==========\n");
+    for (unsigned i = 0; i < MAX_CRYPTO_WORKERS; i++)
+    {
+        char ring_name[32];
 
-    crypto_to_tx = rte_ring_create("CRYPTO_TO_TX", RING_SIZE,
-                                   rte_socket_id(), 0);
-    if (crypto_to_tx == NULL)
-        rte_exit(EXIT_FAILURE, "Cannot create crypto_to_tx ring\n");
-    else
-        printf("Create crypto_to_tx successfully!\n");
+        /* 创建 RX -> Crypto ring */
+        snprintf(ring_name, sizeof(ring_name), "RX_TO_CRYPTO_%u", i);
+        rx_to_crypto[i] = rte_ring_create(ring_name, RING_SIZE,
+                                          rte_socket_id(), 0);
+        if (rx_to_crypto[i] == NULL)
+            rte_exit(EXIT_FAILURE, "Cannot create rx_to_crypto[%u] ring\n", i);
+
+        /* 创建 Crypto -> TX ring */
+        snprintf(ring_name, sizeof(ring_name), "CRYPTO_TO_TX_%u", i);
+        crypto_to_tx[i] = rte_ring_create(ring_name, RING_SIZE,
+                                          rte_socket_id(), 0);
+        if (crypto_to_tx[i] == NULL)
+            rte_exit(EXIT_FAILURE, "Cannot create crypto_to_tx[%u] ring\n", i);
+
+        printf("  Created ring pair #%u: %s <-> %s\n", i, "RX_TO_CRYPTO", "CRYPTO_TO_TX");
+    }
+    printf("Successfully created %d ring pairs!\n", MAX_CRYPTO_WORKERS);
+    printf("==========================================\n\n");
 
     /* 选择所有可用的 crypto lcore：优先选择已 enable 且没有被分配 RX 的 lcore */
     unsigned crypto_lcores[RTE_MAX_LCORE];
@@ -1347,17 +1375,19 @@ int main(int argc, char **argv)
         printf("\n========== Crypto Worker Configuration ==========\n");
         printf("Launching %u crypto worker(s)\n", nb_crypto_lcores);
 
-        /* 启动所有crypto workers */
+        /* 启动所有crypto workers，传递worker_id */
         for (unsigned i = 0; i < nb_crypto_lcores; i++)
         {
-            int r = rte_eal_remote_launch(crypto_loop, NULL, crypto_lcores[i]);
+            /* 传递worker ID给crypto_loop，用于访问专属ring队列 */
+            int r = rte_eal_remote_launch(crypto_loop, (void *)(uintptr_t)i, crypto_lcores[i]);
             if (r != 0)
             {
                 printf("  Failed to launch crypto on lcore %u: %d\n", crypto_lcores[i], r);
             }
             else
             {
-                printf("  Crypto worker #%u launched on lcore %u\n", i+1, crypto_lcores[i]);
+                printf("  Crypto worker #%u launched on lcore %u (using ring pair #%u)\n",
+                       i, crypto_lcores[i], i);
             }
         }
         printf("==================================================\n\n");
