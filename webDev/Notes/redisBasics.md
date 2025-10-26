@@ -1,6 +1,6 @@
 # Redis
 
-> 学习黑马的Redis基础课程的笔记,我要找实习已经犹如热锅上的蚂蚁了!!!
+> 学习黑马的Redis基础课程的笔记,我想自己写,而不是找个所谓的"项目",能运行了之后就直接开始"背诵",太愚蠢了.
 >
 > 但是沉下心来学,没办法,环境就是这样.
 
@@ -429,11 +429,14 @@ public class JedisConnectionFactory {
 
 ### Spring Data Redis
 
-整合 **Lettuce**和**Jedis**.
+> Spring内部整合 **Lettuce**和**Jedis**.
+>
 
 对象**序列化**和**反序列化**.
 
 还是一样,基本参数在yml里面配置:
+
+> 方便,不用手写连接池.
 
 ```yaml
 spring:
@@ -471,17 +474,99 @@ class RedisDemoApplicationTests {
 }
 ```
 
+但是这时候你会发现,存储进来之后就成这样了:
 
+```java
+127.0.0.1:6379> KEYS * 
+1) "HTT:mem:2" 
+2) "jazzu" 
+3) "name" 
+4) "HTT:mem:1" 
+5) "HTT:mem:4" 
+6) "mem" 
+7) "\xac\xed\x00\x05t\x00\x04name"  // 直接jdk序列化了
+8) "k2" 
+9) "users" 
+10) "school" 
+11) "k1" 
+12) "age" 
+13) "k3" 
+14) "user:1"
+```
 
+>  **改变序列化的方式**,上面把key也序列化了.
 
+那么我们就写一个配置类,改变序列化的方式:
 
+```java
+@Configuration // 配置类
+public class RedisConfig {
+    @Bean
+    public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory redisConnectionFactory){
+        // 创建template对象
+        RedisTemplate<String, Object> template = new RedisTemplate<>();
+        // 设置连接工厂
+        template.setConnectionFactory(redisConnectionFactory);
 
+        // 接下来,我们就可以指定序列化工具
+        // 创建JSON序列化工具
+        GenericJackson2JsonRedisSerializer jackson2JsonRedisSerializer = new GenericJackson2JsonRedisSerializer();
 
+        // 设置key的序列化
+        template.setKeySerializer(RedisSerializer.string());
+        template.setHashKeySerializer(RedisSerializer.string());
 
+        // 设置Value的序列化
+        template.setValueSerializer(jackson2JsonRedisSerializer);
+        template.setHashValueSerializer(jackson2JsonRedisSerializer);
+        return template;
+    }
+}
+```
 
+对于一个class来说:
 
+```java
+@Test
+    void saveUser(){
+        redisTemplate.opsForValue().set("user:101", new User("tamaki", 29));
+        // 存入的时候,会进行序列化
+        User user = (User) redisTemplate.opsForValue().get("user:101");
+        // 读取的时候,进行反序列化
+        System.out.println("User:" + user);
+    }
+```
 
+因为要反序列化,所以获取的时候我们要知道对象的类型:
 
+```sh
+127.0.0.1:6379> get user:101
+"{\"@class\":\"org.nunotaba.redisdemo.redis.config.pojo.User\",\"name\":\"tamaki\",\"age\":29}"
+```
+
+这里要拿到全类名,带来了内存开销,很愚蠢.
+
+其实直接默认使用String反序列化,省去自定义过程,当我们要用到对象的时候,反序列化应该在java客户端进行.
+
+```java
+// 使用序列化工具
+    public static final ObjectMapper mapper = new ObjectMapper();
+    @Test
+    void saveUser() throws JsonProcessingException {
+        // 创建对象,并且手动序列化
+        User user = new User("nadeshiko", 23);
+        String json = mapper.writeValueAsString(user);
+
+        stringRedisTemplate.opsForValue().set("user:200", json);
+
+        // 获取数据,还要手动反序列化
+        String jsonUser = stringRedisTemplate.opsForValue().get("user:200");
+        User user1 = mapper.readValue(jsonUser, User.class);
+        System.out.println("user1" + user1);
+    }
+```
+
+存进去的就是纯字符串了,之后把这个干成一个工具类就行.
 
 
 

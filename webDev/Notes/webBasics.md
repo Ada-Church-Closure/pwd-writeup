@@ -609,13 +609,13 @@ http协议直接支持
 
 #### session
 
-session ID--->直接基于cookie.
+**session** ID--->直接基于**cookie**.
 
-> hashcode直接存放在Server内部,比较安全.
+> **hashcode**直接存放在**Server**内部,比较安全.
 >
-> 1.session不能在每个Server上都进行维护.(**服务器的集群**)
+> **1.session**不能在每个**Server**上都进行维护.(**服务器的集群**)
 >
-> 2.Server要维护很多的连接,是一种负担.
+> **2.Server**要维护很多的连接,是一种负担.
 
 #### JWT令牌技术
 
