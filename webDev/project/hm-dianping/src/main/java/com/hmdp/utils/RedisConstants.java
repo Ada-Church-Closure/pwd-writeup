@@ -20,4 +20,12 @@ public class RedisConstants {
     public static final String FEED_KEY = "feed:";
     public static final String SHOP_GEO_KEY = "shop:geo:";
     public static final String USER_SIGN_KEY = "sign:";
+
+    public static final String INCREMENT_ID_KEY = "icr:";
+    public static final int SERIAL_NUMBER_BITS = 32;
+
+    // 开始时间戳 2022.1.1 00:00:00
+    public static final long BEGIN_TIMESTAMP = 1640995200L;
+
+
 }
