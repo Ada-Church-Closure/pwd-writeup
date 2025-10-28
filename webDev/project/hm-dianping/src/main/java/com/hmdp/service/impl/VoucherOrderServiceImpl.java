@@ -8,11 +8,13 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import com.sun.corba.se.spi.servicecontext.ORBVersionServiceContext;
 import org.springframework.aop.framework.AopConfigException;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.ResourceTransactionManager;
@@ -33,12 +35,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Resource
     private ISeckillVoucherService iSeckillVoucherService;
-
-
     @Resource
     private RedisIdWorker redisIdWorker;
-    @Autowired
-    private ResourceTransactionManager resourceTransactionManager;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
 
 
     @Override   // 一个秒杀操作一定是一个事务
@@ -63,6 +64,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
 
         // 5.减去库存
+        // 这就是乐观lock
         boolean success = iSeckillVoucherService.update()
                 .setSql("stock = stock - 1") // set stock = stock - 1
                 .eq("voucher_id", voucherId).gt("stock", 0) // 只要更新时候的value和查询的时候是一样的即可/其实只要更新前大于0即可,否则会出问题
@@ -79,12 +81,35 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         // 不能给整个this方法上lock,只给一个user上锁
         // 我们要保证,只要是来自于一个用户的请求,使用的就是一把lock
         // intern保证持有的lock取决于字符串的常量,而不是一个内存中的新对象
-        synchronized (userId.toString().intern()) {
+        // synchronized (userId.toString().intern()) {
             // return createVoucherOrder(voucherId);
             // 这样直接调用,事务是不会生效的.要使用代理对象.
+
+        // 这里我们要使用基于redis的分布式lock
+        SimpleRedisLock simpleRedisLock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
+
+        // 获取lock
+        // 这里也有问题:
+        // 如果业务阻塞导致lock提前释放,那么这个业务结束的时候还会再次释放lock
+        // 此时他释放的lock就是别人的lock,这就是lock为什么需要name,我们释放之前先看是不是自己的thread id
+        // 但是jvm内部,考虑到分布式,仅仅使用thread id还不够特殊
+        boolean isLocked = simpleRedisLock.tryLock(5);
+
+        // 如果获取失败
+        if(!isLocked){
+            return Result.fail("不允许用户重复下单!!!");
+        }
+
+        try {
+            // 获取代理的对象/事务
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId);
+        } catch (IllegalStateException e) {
+            throw new RuntimeException(e);
+        } finally {
+            simpleRedisLock.unlock();
         }
+        // }
     }
 
     // 直接给整个逻辑上悲观锁
@@ -107,8 +132,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             // 代金券ID
             voucherOrder.setVoucherId(voucherId);
             save(voucherOrder);
-
             return Result.ok(orderId);
-
     }
 }
