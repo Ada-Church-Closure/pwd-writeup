@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import com.hmdp.config.RedissonConfig;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
 import com.hmdp.entity.VoucherOrder;
@@ -11,9 +12,13 @@ import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import com.sun.corba.se.spi.servicecontext.ORBVersionServiceContext;
+import org.redisson.Redisson;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopConfigException;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisHash;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,14 +26,15 @@ import org.springframework.transaction.support.ResourceTransactionManager;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.concurrent.TimeUnit;
 
 /**
  * <p>
  *  服务实现类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
+ * @author mio
+ * @since 2025-10-28
  */
 @Service
 public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, VoucherOrder> implements IVoucherOrderService {
@@ -39,11 +45,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private RedisIdWorker redisIdWorker;
     @Resource
     private StringRedisTemplate stringRedisTemplate;
-
+    @Resource
+    private RedissonClient redissonClient;
 
 
     @Override   // 一个秒杀操作一定是一个事务
-    public Result secKillVoucher(Long voucherId) {
+    public Result secKillVoucher(Long voucherId) throws InterruptedException {
         // 1.查询优惠券
         SeckillVoucher voucher = iSeckillVoucherService.getById(voucherId);
 
@@ -86,14 +93,17 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             // 这样直接调用,事务是不会生效的.要使用代理对象.
 
         // 这里我们要使用基于redis的分布式lock
-        SimpleRedisLock simpleRedisLock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
+        // SimpleRedisLock simpleRedisLock = new SimpleRedisLock("order:" + userId, stringRedisTemplate);
+
+        // 这里我们直接使用redisson提供的lock
+        RLock lock = redissonClient.getLock("lock:order:" + userId);
 
         // 获取lock
         // 这里也有问题:
         // 如果业务阻塞导致lock提前释放,那么这个业务结束的时候还会再次释放lock
         // 此时他释放的lock就是别人的lock,这就是lock为什么需要name,我们释放之前先看是不是自己的thread id
         // 但是jvm内部,考虑到分布式,仅仅使用thread id还不够特殊
-        boolean isLocked = simpleRedisLock.tryLock(5);
+        boolean isLocked = lock.tryLock(1L, TimeUnit.SECONDS);
 
         // 如果获取失败
         if(!isLocked){
@@ -107,7 +117,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         } catch (IllegalStateException e) {
             throw new RuntimeException(e);
         } finally {
-            simpleRedisLock.unlock();
+            lock.unlock();
         }
         // }
     }
