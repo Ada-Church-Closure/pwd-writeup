@@ -4,9 +4,11 @@
 --- DateTime: 10/30/25 11:13 AM
 ---
 ---
----优惠券id 和 用户id 作为参数
+--- 优惠券id 和 用户id 作为参数
+--- v1.1 我们这里还要加入消息队列的控制
 local voucherId = ARGV[1]
 local userId = ARGV[2]
+local orderId = ARGV[3]
 
 --- 数据的key
 local stockKey = 'seckill:stock:' .. voucherId
@@ -23,6 +25,8 @@ end
 
 redis.call('incrby', stockKey, -1)
 redis.call('sadd', orderKey, userId)
+--- 发现有资格,我们发送一个消息到队列中
+redis.call('xadd', 'stream.orders', '*', 'userId', userId, 'voucherId', voucherId, 'id', orderId)
 return 0
 
 
