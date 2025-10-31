@@ -6,12 +6,12 @@ import com.baomidou.mybatisplus.extension.service.IService;
 
 /**
  *
- * @author mio
+ * @author ada
  * @since 2025-10-27
  */
 public interface IVoucherOrderService extends IService<VoucherOrder> {
 
     Result secKillVoucher(Long voucherId) throws InterruptedException;
 
-    Result createVoucherOrder(Long voucherId);
+    void createVoucherOrder(VoucherOrder voucherId);
 }

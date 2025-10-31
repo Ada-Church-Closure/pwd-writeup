@@ -34,7 +34,7 @@ import static com.hmdp.utils.SystemConstants.USER_NICK_NAME_PREFIX;
  * 服务实现类
  * </p>
  *
- * @author mio
+ * @author ada
  * @since 2025-10-25
  */
 @Slf4j
