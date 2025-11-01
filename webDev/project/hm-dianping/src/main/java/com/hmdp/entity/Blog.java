@@ -12,12 +12,8 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
- *
- * @author 虎哥
- * @since 2021-12-22
+ * @author ada
+ * @since 2025-10-30
  */
 @Data
 @EqualsAndHashCode(callSuper = false)
@@ -41,6 +37,7 @@ public class Blog implements Serializable {
      */
     private Long userId;
     /**
+     * false表示这些字段不在blog表内部
      * 用户图标
      */
     @TableField(exist = false)

@@ -36,12 +36,6 @@ MariaDB [hmdp]> show tables;
 
 
 
-先把前端跑起来
-
-```sh
-sudo nginx -p $(pwd) -c conf/nginx.conf # 在当前的目录下方
-```
-
 ## 短信登陆
 
 ### 使用session来实现登陆
@@ -169,9 +163,9 @@ Long类型
 
 > 分段锁方案,就是一次锁的资源变少,分到多个数据库来减少压力.
 
-### 一人一单
+### *一人一单
 
-> 不能让一个人抢太多单,这样就成黄牛了.
+> 不能让一个人抢太多单,这样就成黄牛了,这是本项目的核心难点.
 
 ```conf
    upstream backend {
@@ -378,6 +372,22 @@ redis.call('xadd', 'stream.orders', '*', 'userId', userId, 'voucherId', voucherI
 return 0
 ```
 
+## 点评功能
+
+> 这是核心的,也有可移植性的功能.
+>
+> 上传,点赞排行等.
+
+### Note:发布笔记的功能/评价
+
+> 实现一些简单的接口即可.
+
+
+
+
+
+
+
 
 
 
@@ -389,6 +399,12 @@ return 0
 
 
 # Frontend
+
+先把前端跑起来
+
+```sh
+sudo nginx -p $(pwd) -c conf/nginx.conf # 在当前的目录下方
+```
 
 > 简单分析一下前端就可以.
 

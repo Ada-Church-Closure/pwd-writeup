@@ -16,7 +16,13 @@ import java.util.UUID;
 @RestController
 @RequestMapping("upload")
 public class UploadController {
+    // TODO 实现图床功能
 
+    /**
+     * 实现文件上传功能
+     * @param image 上传的图片
+     * @return  返回图片地址,名称.
+     */
     @PostMapping("blog")
     public Result uploadImage(@RequestParam("file") MultipartFile image) {
         try {
