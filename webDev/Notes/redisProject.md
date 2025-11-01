@@ -89,7 +89,7 @@ redis本身有**内存淘汰**机制--->内存不足的时候直接去掉这部�
 
 > 客户端的请求在**redis**和**mysql**中都不存在,所有的请求都会直接到达数据库.
 
-1.缓存null对象(控制TTL),短期的不一致性(就是数据库中没有,我们就先暂时存放一个null对象,但是如果这期间更新了数据库,那么就会出现不一致的情况)
+1.缓存null对象(控制TTL),短期的不一致性(就是数据库中没有,我们就先**暂时存放一个null**对象,但是如果这期间更新了数据库,那么就会出现**不一致**的情况,但是时间比较短)
 
 2.**布隆过滤**--->算法
 
@@ -313,6 +313,8 @@ leaseTime不断地更新有效期,**看门狗机制**不断重置超时的时间
 
 我们尝试使用stream来解决:
 
+> 注意每次清空都要创建这个消费者组.
+
 ```sh
 127.0.0.1:6379> XGROUP CREATE stream.orders g1 0 MKSTREAM
 OK
@@ -382,13 +384,125 @@ return 0
 
 > 实现一些简单的接口即可.
 
+利用**sortedSet**实现点赞排行榜的功能.
 
+> 这里的分数,也就是排序的score,可以直接用时间戳.
 
+sql查询的小问题:
 
+```java
+ // 这里sql查询的问题 in(5, 1) 也会从1开始查询       
+ // 利用 ORDER BY FILED (id, 5, 1) 来进行查询 
+ List<UserDTO> userDTOS = userService.l
+         .stream()                      
+         .map(user -> BeanUtil.copyProp
+         .collect(Collectors.toList());
+```
 
+感觉处理不是很优雅:
 
+```java
+  List<Long> ids = top5UserId.stream().map(Long::valueOf).collect(Collectors.toList());         
+  String idStr = StrUtil.join(",", ids);
+  // 3.用这些id查询出来对应的user
+  // 这里sql查询的问题 in(5, 1) 也会从1开始查询
+  // 利用 ORDER BY FILED (id, 5, 1) 来进行查询
+  // 好复杂
+  List<UserDTO> userDTOS = userService.query()
+          .in("id", ids)
+          .last("ORDER BY FIELD(id," + idStr + ")")
+          .list()
+          .stream()
+          .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
+          .collect(Collectors.toList());
+```
 
+## 好友/关注的实现
 
+看这张follow表的结构:
+
+```sql
+CREATE TABLE `tb_follow` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) unsigned NOT NULL COMMENT '用户id',
+  `follow_user_id` bigint(20) unsigned NOT NULL COMMENT '关联的用户id',
+  `create_time` timestamp NOT NULL DEFAULT current_timestamp() COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=COMPACT
+```
+
+### 关注和取关
+
+直接插入mysql数据.
+
+### 共同关注
+
+求set的交集.--->那么我们每次关注的时候,也要把这个数据放到redis内部才可以.
+
+比如这就是实现的逻辑:
+
+```java
+@Override
+    public Result followCommons(Long id) {
+        Long userId = UserHolder.getUser().getId();
+        String myKey = FOLLOWS_KEY + userId;
+        String targetKey = FOLLOWS_KEY + id;
+        // 求交集
+        Set<String> intersectFollows = stringRedisTemplate.opsForSet().intersect(myKey, targetKey);
+
+        if(intersectFollows == null || intersectFollows.isEmpty()){
+            return Result.ok(Collections.emptyList());
+        }
+
+        List<Long> ids = intersectFollows.stream().map(Long::valueOf).collect(Collectors.toList());
+        // 查询交集的关注
+        List<UserDTO> userDTOList = userService.listByIds(ids)
+                .stream()
+                .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
+                .collect(Collectors.toList());
+
+        return Result.ok(userDTOList);
+    }
+```
+
+### 关注推送
+
+> **Feed流**--->持续提供沉浸式的体验,下拉获取新的信息.
+
+#### 智能排序
+
+粘度很高,推送用户感兴趣的信息.
+
+#### Timeline
+
+直接根据时间,不进行筛选,朋友圈.
+
+> 我们实现Timeline,直接推送的关注.
+>
+
+##### 拉模式(读扩散)
+
+先拉取,然后进行排序的操作.
+
+##### 推模式(写扩散)
+
+创作者写的时候,直接写入所有用户的收件箱.--->实现简单,延时比较低.
+
+##### 推拉结合(读写混合模式)
+
+粉丝少,直接推送,推模式写扩散.
+
+大V,一般放在发件箱,也就是拉模式读扩散,对于狂热粉丝,可以直接推模式写扩散.
+
+> 显然我们使用推模式.
+
+feed流数据更新,角标也发生变化,不能采取传统的分页模式.
+
+利用滚动分页,这次的**起始角标是上一次的结束位置**开始的.--->利用sortedset!
+
+> ​	解决的问题就是查询期间,如果有大量的数据插入,角标会发生变化,但是如果本次查询利用的是上一次查询的**最小值**(在这个基础上做偏移,**偏移量**是(**在上一次的查询结果中,和最小值一样的结果的个数**)),就没有什么问题了.
+
+我们经过本次查询之后会返回一些参数,下一次前端就会使用这些参数来进行新的查询.
 
 
 
