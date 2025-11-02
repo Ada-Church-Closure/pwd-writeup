@@ -2,6 +2,7 @@ package com.hmdp.controller;
 
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.util.StrUtil;
 import com.hmdp.dto.LoginFormDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
@@ -11,10 +12,15 @@ import com.hmdp.service.IUserInfoService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpSession;
+
+import static com.hmdp.utils.RedisConstants.LOGIN_USER_KEY;
 
 /**
  * 前端控制器
@@ -32,6 +38,8 @@ public class UserController {
 
     @Resource
     private IUserInfoService userInfoService;
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     /**
      * 发送手机验证码
@@ -57,9 +65,14 @@ public class UserController {
      * @return 无
      */
     @PostMapping("/logout")
-    public Result logout(){
-        // TODO 实现登出功能
-        return Result.fail("功能未完成");
+    public Result logout(HttpServletRequest request){
+        String token = request.getHeader("authorization");
+        if(StrUtil.isBlank(token)){
+            return Result.fail("您目前尚未登陆!");
+        }
+
+        stringRedisTemplate.delete(LOGIN_USER_KEY + token);
+        return Result.ok("退出登陆成功,まだ会えたいね！");
     }
 
     @GetMapping("/me")
