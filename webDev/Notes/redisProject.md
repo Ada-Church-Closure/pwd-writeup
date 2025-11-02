@@ -504,6 +504,52 @@ feed流数据更新,角标也发生变化,不能采取传统的分页模式.
 
 我们经过本次查询之后会返回一些参数,下一次前端就会使用这些参数来进行新的查询.
 
+## 附近商户
+
+### GEO数据结构
+
+> 存储地理坐标信息.
+
+redis内部有的数据结构--->底层还是Zset
+
+这里的业务逻辑太复杂,其实就是按照距离排序然后进行分页的查询.
+
+## 用户签到
+
+sign table的结构:
+
+```sql
+CREATE TABLE `tb_sign` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id` bigint(20) unsigned NOT NULL COMMENT '用户id',
+  `year` year(4) NOT NULL COMMENT '签到的年',
+  `month` tinyint(2) NOT NULL COMMENT '签到的月',
+  `date` date NOT NULL COMMENT '签到的日期',
+  `is_backup` tinyint(1) unsigned DEFAULT NULL COMMENT '是否补签',
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=COMPACT
+```
+
+我们这里使用**redis**中的**BitMap**--->二进制来进行处理.
+
+一个bit对应一个月的某一天.
+
+> 这里前端好像没有接口?
+
+统计:连续签到的次数.
+
+## UV统计
+
+### HyperLogLog
+
+> 这是一种概率算法,我们统计用户的访问量.
+
+UV:Unique Visitor 独立访客量.
+
+PV:Page View 页面的点击量. 
+
+
+
 
 
 

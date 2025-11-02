@@ -17,9 +17,7 @@ import javax.annotation.Resource;
 import javax.servlet.http.HttpSession;
 
 /**
- * <p>
  * 前端控制器
- * </p>
  *
  * @author ada
  * @since 2025-10-30
@@ -101,4 +99,23 @@ public class UserController {
         // 返回
         return Result.ok(userDTO);
     }
+
+    /**
+     * 当前user的签到功能
+     * @return 是否签到成功
+     */
+    @PostMapping("/sign")
+    public Result sign(){
+        return userService.sign();
+    }
+
+    /**
+     * 查询当前用户本月的连续签到次数
+     * @return  连续签到的天数
+     */
+    @GetMapping("/sign/count")
+    public Result signCount(){
+        return userService.signCount();
+    }
+
 }
