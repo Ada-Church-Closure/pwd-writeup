@@ -1,0 +1,110 @@
+/* === Google Material Design 风格主题 === */
+
+/* 全局基础 */
+html {
+    font-size: 14px;
+    width: 100%;
+}
+
+body {
+    margin: 0;
+    font-family: 'Roboto', 'Noto Sans', 'Helvetica Neue', Arial, sans-serif;
+    background-color: #fafafa;
+    color: #202124;
+}
+
+/* 标签页高亮条 */
+.el-tabs__active-bar {
+    height: 3px;
+    background-image: linear-gradient(to right, #4285F4, #5c9ef8);
+    border-radius: 3px;
+}
+
+/* 标签文字 */
+.el-tabs__item {
+    font-size: 14px;
+    font-weight: 500;
+    color: #5f6368;
+}
+
+.el-tabs__item.is-active {
+    color: #1a73e8;
+}
+
+/* 底部导航栏 */
+.foot {
+    width: 100%;
+    height: 8%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0 -1px 3px rgba(60, 64, 67, 0.1);
+    background-color: #ffffff;
+    position: fixed;
+    bottom: 0;
+    border-top: 1px solid #e0e0e0;
+}
+
+/* 底部按钮 */
+.foot .add-btn {
+    width: 42px;
+    height: 42px;
+    background-color: #1a73e8;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: background-color 0.2s ease;
+}
+
+.foot .add-btn:hover {
+    background-color: #1669c1;
+}
+
+/* 底部文字与图标 */
+.foot-box {
+    width: 20%;
+    color: #5f6368;
+    text-align: center;
+}
+
+.foot-text,
+.foot-view {
+    text-align: center;
+    transition: color 0.2s ease;
+}
+
+.foot-text {
+    font-size: 10px;
+    margin-top: -4px;
+}
+
+.foot-view {
+    font-size: 26px;
+}
+
+.active {
+    color: #1a73e8;
+}
+
+/* Element-UI 评价星星 */
+.el-rate__icon {
+    margin-right: 0;
+}
+
+/* 统一按钮风格 */
+button,
+.el-button {
+    background-color: #1a73e8;
+    color: white;
+    border-radius: 4px;
+    border: none;
+    transition: background-color 0.2s ease;
+}
+
+button:hover,
+.el-button:hover {
+    background-color: #1669c1;
+}
