@@ -1,0 +1,30 @@
+Start testing: Jan 01 19:24 CST
+----------------------------------------------------------
+1/1 Testing: MathTests.TestAddition
+1/1 Test: MathTests.TestAddition
+Command: "/home/ada/pwd-writeup/Netfilter/Cpp_Tutorial/build/my_test" "--gtest_filter=MathTests.TestAddition" "--gtest_also_run_disabled_tests"
+Directory: /home/ada/pwd-writeup/Netfilter/Cpp_Tutorial/build
+"MathTests.TestAddition" start time: Jan 01 19:24 CST
+Output:
+----------------------------------------------------------
+Running main() from /home/ada/pwd-writeup/Netfilter/Cpp_Tutorial/build/_deps/googletest-src/googletest/src/gtest_main.cc
+Note: Google Test filter = MathTests.TestAddition
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from MathTests
+[ RUN      ] MathTests.TestAddition
+[       OK ] MathTests.TestAddition (0 ms)
+[----------] 1 test from MathTests (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 1 test.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"MathTests.TestAddition" end time: Jan 01 19:24 CST
+"MathTests.TestAddition" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Jan 01 19:24 CST

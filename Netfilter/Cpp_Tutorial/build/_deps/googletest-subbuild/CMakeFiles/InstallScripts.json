@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/ada/pwd-writeup/Netfilter/Cpp_Tutorial/build/_deps/googletest-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

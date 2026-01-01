@@ -1,0 +1,5 @@
+if(EXISTS "/home/ada/pwd-writeup/Netfilter/Cpp_Tutorial/build/my_test[1]_tests.cmake")
+  include("/home/ada/pwd-writeup/Netfilter/Cpp_Tutorial/build/my_test[1]_tests.cmake")
+else()
+  add_test(my_test_NOT_BUILT my_test_NOT_BUILT)
+endif()
